@@ -134,3 +134,6 @@ Foundation/ApplePackage/
 /Vendor/
 /.build-authfix/
 /artifacts/
+
+# Codespaces download outputs never belong in git
+/cloud-downloads/
