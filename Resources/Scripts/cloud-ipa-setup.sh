@@ -44,7 +44,7 @@ fi
 mkdir -p "${target_dir}"
 mkdir -p "${temporary_dir}/unpacked"
 tar -xzf "${temporary_dir}/${asset}" -C "${temporary_dir}/unpacked"
-binary="$(find "${temporary_dir}/unpacked" -type f -name ipatool -print -quit)"
+binary="$(find "${temporary_dir}/unpacked" -type f \( -name ipatool -o -name 'ipatool-*-linux-amd64' \) -print -quit)"
 if [[ -z "${binary}" ]]; then
     echo "Official release archive did not contain ipatool." >&2
     exit 1
