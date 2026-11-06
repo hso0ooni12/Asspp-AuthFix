@@ -61,7 +61,37 @@ enum StoreDownloadService {
         do {
             let region = Configuration.countryCode(for: account.store)
             var effectiveVersion = version
-            let response = try await StoreDownloadProtocol.fetchWithFallback(version: version) { endpoint, requestedVersion in
+            // R3: Apple's newer ent/download transport uses an account-bound KBSync
+            // blob. This is experimental and falls back to the verified R2 path.
+            var preferredResponse: [String: Any]?
+            if operation == "download" {
+                do {
+                    let preferredVersion: String
+                    if let version {
+                        preferredVersion = version
+                    } else {
+                        guard let region else { throw StoreDownloadError.catalogUnavailable }
+                        let metadata = try await catalogVersion(session: session, appID: app.id,
+                                                                region: region, platform: platform, trace: trace)
+                        guard metadata.bundleID == nil || metadata.bundleID == app.bundleID else {
+                            throw StoreDownloadError.catalogUnavailable
+                        }
+                        preferredVersion = metadata.externalVersionID
+                    }
+                    preferredResponse = try await fetchPreferred(session: session, account: &account,
+                                                                  appID: app.id, bundleID: app.bundleID,
+                                                                  version: preferredVersion, trace: trace)
+                    effectiveVersion = preferredVersion
+                } catch {
+                    try Task.checkCancellation()
+                    logger.info("Store download [\\(trace)]: preferred transport unavailable, trying legacy transport; \\(StoreDiagnostics.errorSummary(error))")
+                }
+            }
+            let response: [String: Any]
+            if let preferredResponse {
+                response = preferredResponse
+            } else {
+                response = try await StoreDownloadProtocol.fetchWithFallback(version: version) { endpoint, requestedVersion in
                 effectiveVersion = requestedVersion
                 return try await fetch(session: session, endpoint: endpoint, account: &account,
                                        appID: app.id, version: requestedVersion, trace: trace)
@@ -80,8 +110,9 @@ enum StoreDownloadService {
                 else { throw StoreDownloadError.catalogUnavailable }
                 logger.info("Store download [\(trace)]: catalog version=\(metadata.externalVersionID)")
                 return metadata.externalVersionID
-            } onFallback: { reason in
-                logger.info("Store download [\(trace)]: trying \(reason == "empty-redownload-http500" ? "update" : "redownload"), reason=\(reason)")
+                } onFallback: { reason in
+                    logger.info("Store download [\(trace)]: trying \(reason == "empty-redownload-http500" ? "update" : "redownload"), reason=\(reason)")
+                }
             }
             // Preserve the existing UI's explicit free-license acquisition flow.
             if StoreDownloadProtocol.failureCode(response) == "9610" {
@@ -178,6 +209,68 @@ enum StoreDownloadService {
             return plist
         }
         throw StoreDownloadError.invalidRedirect
+    }
+
+    /// Preferred R3 request. No redirects are followed because X-Token must never
+    /// be sent to a different destination. Only the fixed Apple endpoint is used.
+    private static func fetchPreferred(session: URLSession, account: inout Account, appID: Int64,
+                                       bundleID: String, version: String, trace: String) async throws -> [String: Any]
+    {
+        let guid = Configuration.deviceIdentifier
+        let dsid = account.directoryServicesIdentifier
+        guard !version.isEmpty, guid.count == 12,
+              let suffix = UInt32(guid.suffix(8), radix: 16)
+        else { throw StoreDownloadError.invalidPackage }
+        let blob = await Task.detached(priority: .utility) {
+            R3KBSync.generate(guid: guid, directoryServicesIdentifier: dsid)
+        }.value
+        guard let blob else { throw StoreDownloadError.invalidPackage }
+
+        var serial = Data([0x54, 0xc8, 0xb0, 0xa9, 0x88])
+        serial.append(contentsOf: [
+            UInt8((suffix >> 24) & 0xff), UInt8((suffix >> 16) & 0xff),
+            UInt8((suffix >> 8) & 0xff), UInt8(suffix & 0xff),
+        ])
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "downloaddispatch.itunes.apple.com"
+        components.path = "/WebObjects/DownloadDispatch.woa/wa/ent/download"
+        guard let url = components.url, url.scheme == "https",
+              url.host == "downloaddispatch.itunes.apple.com"
+        else { throw StoreDownloadError.invalidRedirect }
+        let payload: [String: Any] = [
+            "creditDisplay": "", "guid": guid, "kbsync": blob,
+            "salableAdamId": String(appID), "serialNumber": serial.base64EncodedString(),
+            "externalVersionId": version,
+        ]
+        let body = try PropertyListSerialization.data(fromPropertyList: payload, format: .xml, options: 0)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("Configurator/2.18 (Macintosh; OS X 15.3.2; 24D81) AppleWebKit/0620.2.4.11.6",
+                         forHTTPHeaderField: "User-Agent")
+        request.setValue(account.store, forHTTPHeaderField: "X-Apple-Store-Front")
+        request.setValue(account.passwordToken, forHTTPHeaderField: "X-Token")
+        request.setValue(dsid, forHTTPHeaderField: "iCloud-DSID")
+        request.setValue(dsid, forHTTPHeaderField: "X-Dsid")
+        for (name, value) in account.cookie.buildCookieHeader(url) {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        logger.info("Store download [\(trace)]: endpoint=ent/download request starting")
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse else { throw StoreDownloadError.response(0) }
+        logger.info("Store download [\(trace)]: endpoint=ent/download HTTP=\(response.statusCode) bytes=\(data.count)")
+        // No re-POST on redirects, ever. Responses are validated before use.
+        guard response.statusCode == 200, let plist = StoreProtocol.plist(data)
+        else { throw StoreDownloadError.response(response.statusCode) }
+        logger.info("Store download [\(trace)]: \(StoreDownloadProtocol.summary(plist))")
+        let item = try StoreDownloadProtocol.packageItem(plist, bundleID: bundleID, version: version)
+        guard let urlText = item["URL"] as? String, !urlText.isEmpty,
+              let signatures = item["sinfs"] as? [[String: Any]], !signatures.isEmpty
+        else { throw StoreDownloadError.invalidPackage }
+        mergeCookies(response: response, url: url, account: &account)
+        return plist
     }
 
     private static func mergeCookies(response: HTTPURLResponse, url: URL, account: inout Account) {
