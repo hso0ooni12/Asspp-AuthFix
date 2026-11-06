@@ -1,0 +1,26 @@
+name: Verify Codespaces IPA tooling
+
+on:
+  push:
+    paths:
+      - ".devcontainer/**"
+      - "Resources/Scripts/cloud-ipa-setup.sh"
+      - "Resources/Scripts/cloud-download-tahakom.sh"
+      - ".github/workflows/codespace-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: bash -n Resources/Scripts/cloud-ipa-setup.sh Resources/Scripts/cloud-download-tahakom.sh
+      - name: Install official, SHA-verified ipatool
+        run: bash Resources/Scripts/cloud-ipa-setup.sh
+      - name: Verify installed CLI
+        run: "${HOME}/.local/bin/ipatool --version"
