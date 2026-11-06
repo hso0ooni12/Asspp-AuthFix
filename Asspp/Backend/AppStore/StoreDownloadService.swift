@@ -84,7 +84,7 @@ enum StoreDownloadService {
                     effectiveVersion = preferredVersion
                 } catch {
                     try Task.checkCancellation()
-                    logger.info("Store download [\\(trace)]: preferred transport unavailable, trying legacy transport; \\(StoreDiagnostics.errorSummary(error))")
+                    logger.info("Store download [\(trace)]: preferred transport unavailable, trying legacy transport; \(StoreDiagnostics.errorSummary(error))")
                 }
             }
             let response: [String: Any]
@@ -92,24 +92,25 @@ enum StoreDownloadService {
                 response = preferredResponse
             } else {
                 response = try await StoreDownloadProtocol.fetchWithFallback(version: version) { endpoint, requestedVersion in
-                effectiveVersion = requestedVersion
-                return try await fetch(session: session, endpoint: endpoint, account: &account,
-                                       appID: app.id, version: requestedVersion, trace: trace)
-            } resolveVersion: {
-                // An unpinned redownload can return a tvOS build for an iOS app.
-                guard let region else { throw StoreDownloadError.catalogUnavailable }
-                let metadata: StoreDownloadProtocol.CatalogVersion
-                do {
-                    metadata = try await catalogVersion(session: session, appID: app.id, region: region, platform: platform, trace: trace)
-                } catch {
-                    try Task.checkCancellation()
-                    throw StoreDownloadError.catalogUnavailable
-                }
-                guard !metadata.externalVersionID.isEmpty,
-                      metadata.bundleID == nil || metadata.bundleID == app.bundleID
-                else { throw StoreDownloadError.catalogUnavailable }
-                logger.info("Store download [\(trace)]: catalog version=\(metadata.externalVersionID)")
-                return metadata.externalVersionID
+                    effectiveVersion = requestedVersion
+                    return try await fetch(session: session, endpoint: endpoint, account: &account,
+                                           appID: app.id, version: requestedVersion, trace: trace)
+                } resolveVersion: {
+                    // An unpinned redownload can return a tvOS build for an iOS app.
+                    guard let region else { throw StoreDownloadError.catalogUnavailable }
+                    let metadata: StoreDownloadProtocol.CatalogVersion
+                    do {
+                        metadata = try await catalogVersion(session: session, appID: app.id, region: region,
+                                                            platform: platform, trace: trace)
+                    } catch {
+                        try Task.checkCancellation()
+                        throw StoreDownloadError.catalogUnavailable
+                    }
+                    guard !metadata.externalVersionID.isEmpty,
+                          metadata.bundleID == nil || metadata.bundleID == app.bundleID
+                    else { throw StoreDownloadError.catalogUnavailable }
+                    logger.info("Store download [\(trace)]: catalog version=\(metadata.externalVersionID)")
+                    return metadata.externalVersionID
                 } onFallback: { reason in
                     logger.info("Store download [\(trace)]: trying \(reason == "empty-redownload-http500" ? "update" : "redownload"), reason=\(reason)")
                 }
