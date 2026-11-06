@@ -5,7 +5,7 @@
 
 // MARK: - App Identity
 
-PRODUCT_BUNDLE_IDENTIFIER = wiki.qaq.Asspp
+PRODUCT_BUNDLE_IDENTIFIER = wiki.qaq.Asspp.AuthFix
 PRODUCT_NAME = $(TARGET_NAME)
 
 // MARK: - Deployment Targets
@@ -41,7 +41,7 @@ ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor
 
 GENERATE_INFOPLIST_FILE = YES
 INFOPLIST_FILE = Asspp/Info.plist
-INFOPLIST_KEY_CFBundleDisplayName = Asspp
+INFOPLIST_KEY_CFBundleDisplayName = Asspp AuthFix
 INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.developer-tools
 INFOPLIST_KEY_NSLocalNetworkUsageDescription = Asspp requires this permission to communicate with install service on your device.
 INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES

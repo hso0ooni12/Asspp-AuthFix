@@ -129,3 +129,8 @@ Configuration/Developer.xcconfig
 References/
 
 Foundation/ApplePackage/
+
+# Generated, pinned AuthFix build dependencies and products
+/Vendor/
+/.build-authfix/
+/artifacts/

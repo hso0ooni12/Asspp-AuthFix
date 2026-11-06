@@ -8,7 +8,7 @@
 	</array>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)wiki.qaq.Asspp</string>
+		<string>$(AppIdentifierPrefix)wiki.qaq.Asspp.AuthFix</string>
 	</array>
 </dict>
 </plist>
