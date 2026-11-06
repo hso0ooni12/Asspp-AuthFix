@@ -29,6 +29,12 @@ CODE_SIGNING_REQUIRED = NO
 CODE_SIGNING_ALLOWED = NO
 CONFIG
 
+extra_xcodebuild_flags=()
+if [[ -n "${R3_KBSYNC_ARCHIVE:-}" ]]; then
+  [[ -s "${R3_KBSYNC_ARCHIVE}" ]] || { echo "Missing KBSync archive"; exit 1; }
+  extra_xcodebuild_flags=(OTHER_LDFLAGS="-force_load ${R3_KBSYNC_ARCHIVE}")
+fi
+
 xcodebuild -workspace Asspp.xcworkspace -scheme Asspp -configuration Release \
   -destination 'generic/platform=iOS' \
   -derivedDataPath .build-authfix/DerivedData \
@@ -37,7 +43,7 @@ xcodebuild -workspace Asspp.xcworkspace -scheme Asspp -configuration Release \
   CODE_SIGN_ENTITLEMENTS= MARKETING_VERSION=4.2.4 CURRENT_PROJECT_VERSION=2026110702 \
   PRODUCT_BUNDLE_IDENTIFIER=wiki.qaq.Asspp.AuthFix \
   INFOPLIST_KEY_CFBundleDisplayName='Asspp AuthFix' \
-  build 2>&1 | tee artifacts/build.log | xcbeautify
+  "${extra_xcodebuild_flags[@]}" build 2>&1 | tee artifacts/build.log | xcbeautify
 
 python3 - <<'PY'
 from pathlib import Path
