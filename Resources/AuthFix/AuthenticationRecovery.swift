@@ -5,7 +5,7 @@ public struct AuthenticationDeliveryError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         let summary = statuses.map { String($0) }.joined(separator: ", ")
-        return "AuthFix R1: Apple returned no usable sign-in response (HTTP \(summary)). Recovery attempts are exhausted. No account authentication result was received."
+        return "AuthFix R2: Apple returned no usable sign-in response (HTTP \(summary)). Recovery attempts are exhausted. No account authentication result was received."
     }
 }
 

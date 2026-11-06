@@ -1,11 +1,11 @@
-# Asspp AuthFix R1
+# Asspp AuthFix R2
 
-Experimental iOS build based on Asspp 4.2.2 and pinned ApplePackage 2.0.3.
+Experimental iOS build based on Asspp 4.2.2 and pinned ApplePackage 2.0.3. Version 4.2.4 (2026110702), bundle wiki.qaq.Asspp.AuthFix.
 
-This build handles empty/HTML HTTP 204 and 404 authentication replies with bounded retries. If Apple's bag route consistently returns no business response, it tries the alternate slash form and the Apple native authentication route. SAP signatures, HTTPS certificate verification and the existing verification-code session remain required. HTTP 403, rate limits and actual App Store business errors do not trigger fallback retries.
+R2 addresses connection failures during SAP initialization, before any Apple account sign-in request. It uses ephemeral URLSession for the two public Apple setup endpoints, with a single NIO fallback only for connection/DNS/time-out failures. TLS certificate checks remain enabled. Automatic redirects, shared cookies and shared credential storage are disabled for setup; streamed bodies are capped at 2 MiB.
 
-The app logs route indices, numeric HTTP statuses, response sizes and whether an Apple responder header was present. It does not add credentials, verification codes, cookies, GUIDs or response bodies to logs. No Apple account is used by CI. The IPA needs signing on the iPhone. Login and download success must be tested on the physical device; a successful build does not prove authentication compatibility.
+Each setup stage logs its name, HTTP status and byte count. Transport failures display the actual NIO POSIX/TLS or URL error code, without logging URLs, credentials, cookies, signatures or SAP request/reply contents. The UI resets failed setup sessions. The R1 bounded authentication-route recovery is retained.
 
-Version: 4.2.3 (2026110701). Display name: Asspp AuthFix. Bundle identifier: wiki.qaq.Asspp.AuthFix.
+CI runs focused offline transport tests and a separate public SAP setup probe without using an Apple account, then builds and verifies an unsigned arm64 IPA. The probe is an observation from the CI network; its result is recorded separately and is not an authentication-success test. Physical iPhone sign-in still requires testing.
 
-Build with `bash Resources/AuthFix/build.sh` on a Mac with Xcode and xcbeautify. CI prepares the pinned dependency and runs offline recovery checks before building the unsigned IPA.
+Build on macOS with Xcode and xcbeautify using `bash Resources/AuthFix/build.sh`.

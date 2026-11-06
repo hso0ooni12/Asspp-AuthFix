@@ -31,8 +31,15 @@ public actor Authenticator {
     /// A fresh SAP exchange is mandatory. Reuse this instance when supplying a verification code.
     public init(cookies: [Cookie] = []) async throws {
         deviceIdentifier = Configuration.deviceIdentifier
-        let bag = try await Bag.fetchBag(redirectConfiguration: .disallow)
+        APLogger.info("AuthFix R2: loading Apple sign-in routing")
+        let bag: Bag.BagOutput
+        do {
+            bag = try await Bag.fetchBag(redirectConfiguration: .disallow)
+        } catch {
+            throw AuthenticationConnectionError(stage: "Apple routing", primary: SAPSetupTransport.diagnostic(error), fallback: nil)
+        }
         endpoint = try Self.createInitialRequestEndpoint(baseURL: bag.authEndpoint, deviceIdentifier: deviceIdentifier)
+        APLogger.info("AuthFix R2: initializing SAP before sign-in")
         signer = try await SAPSigner.connect()
         self.cookies = cookies
     }
@@ -92,13 +99,18 @@ public actor Authenticator {
                     sapSigner: signer,
                 )
                 let accumulator = ResponseAccumulator(request: request, maxBodySize: 2 * 1024 * 1024)
-                let response = try await client.execute(request: request, delegate: accumulator).futureResult.get()
+                let response: HTTPClient.Response
+                do {
+                    response = try await client.execute(request: request, delegate: accumulator).futureResult.get()
+                } catch {
+                    throw AuthenticationConnectionError(stage: "sign-in request", primary: SAPSetupTransport.diagnostic(error), fallback: nil)
+                }
                 let body = response.body.map { Data($0.readableBytesView) } ?? Data()
                 let status = response.status.code
                 deliveryStatuses.append(status)
                 let hasLocation = response.headers.first(name: "location").map { !$0.isEmpty } ?? false
                 let hasAppleResponder = !response.headers["x-responding-instance"].isEmpty
-                APLogger.info("AuthFix R1 route \(routeIndex + 1)/\(candidates.count) attempt \(attempt): HTTP \(status), bytes=\(body.count), AppleResponder=\(hasAppleResponder)")
+                APLogger.info("AuthFix R2 route \(routeIndex + 1)/\(candidates.count) attempt \(attempt): HTTP \(status), bytes=\(body.count), AppleResponder=\(hasAppleResponder)")
                 if !AuthenticationRecovery.shouldRetry(status: status, body: body, hasLocation: hasLocation) { return response }
                 if attempt < AuthenticationRecovery.attemptsPerRoute {
                     try await Task.sleep(nanoseconds: 2_000_000_000)

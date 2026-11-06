@@ -18,6 +18,9 @@ if actual != REVISION:
 
 for name in ["Authenticate.swift", "AuthenticationRecovery.swift"]:
     shutil.copy2(ROOT / "Resources" / "AuthFix" / name, VENDOR / "Sources" / "ApplePackage" / "Commands" / name)
+for name in ["SAPSetupTransport.swift", "SAPSigner+Connect.swift"]:
+    shutil.copy2(ROOT / "Resources" / "AuthFix" / name, VENDOR / "Sources" / "ApplePackage" / "SAP" / name)
+shutil.copy2(ROOT / "Resources" / "AuthFix" / "SAPSetupTransportTests.swift", VENDOR / "Tests" / "ApplePackageTests" / "SAPSetupTransportTests.swift")
 
 project = ROOT / "Asspp.xcodeproj" / "project.pbxproj"
 text = project.read_text()
@@ -38,4 +41,4 @@ if 'relativePath = Vendor/ApplePackage;' not in text:
     text = text.replace('/* Begin XCRemoteSwiftPackageReference section */', replacement + '/* Begin XCRemoteSwiftPackageReference section */', 1)
 text = text.replace(f'{identifier} /* XCRemoteSwiftPackageReference "ApplePackage" */', f'{identifier} /* XCLocalSwiftPackageReference "ApplePackage" */')
 project.write_text(text)
-print("Prepared pinned ApplePackage 2.0.3 with AuthFix R1 recovery.")
+print("Prepared pinned ApplePackage 2.0.3 with AuthFix R2 native SAP setup transport.")

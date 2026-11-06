@@ -99,7 +99,7 @@ struct AddAccountView: View {
                         self.error = error
                         if case ApplePackage.AuthenticationError.verificationCodeRequired = error {
                             codeRequired = true
-                        } else if error is ApplePackage.AuthenticationDeliveryError {
+                        } else if error is ApplePackage.AuthenticationDeliveryError || error is ApplePackage.AuthenticationConnectionError {
                             authenticator = nil
                             codeRequired = false
                             code = ""
