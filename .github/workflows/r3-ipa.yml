@@ -1,0 +1,92 @@
+name: R3 Experimental iOS IPA
+
+on:
+  push:
+    branches: [r3-kbsync-experiment]
+    paths:
+      - "Asspp/Backend/AppStore/**"
+      - "Resources/AuthFix/build.sh"
+      - "Resources/R3/KBSyncBridge/**"
+      - ".github/workflows/r3-ipa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asspp-r3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-experimental-ios:
+    runs-on: macos-26
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.0"
+      - name: Select Xcode and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          best_path=""
+          best_ver=""
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            case "$app" in *beta*|*Beta*|*_RC*) continue ;; esac
+            ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true)
+            [ -n "$ver" ] || continue
+            if [ -z "$best_ver" ] || [ "$(printf '%s\n%s\n' "$best_ver" "$ver" | sort -V | tail -1)" = "$ver" ]; then
+              best_ver="$ver"
+              best_path="$app"
+            fi
+          done
+          [ -n "$best_path" ] || { echo 'No Xcode found'; exit 1; }
+          sudo xcode-select -s "$best_path"
+          xcodebuild -version
+          command -v xcbeautify >/dev/null || brew install xcbeautify
+      - name: Build pinned iOS arm64 KBSync bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream="${RUNNER_TEMP}/ipatool-upstream"
+          git clone --depth 1 --branch v2.7.0 https://github.com/majd/ipatool.git "$upstream"
+          mkdir -p "$upstream/cmd/r3bridge"
+          cp Resources/R3/KBSyncBridge/main.go "$upstream/cmd/r3bridge/main.go"
+          cd "$upstream"
+          export GOOS=ios GOARCH=arm64 CGO_ENABLED=1
+          export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
+          export CC="$(xcrun --sdk iphoneos --find clang)"
+          export CGO_CFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
+          export CGO_LDFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
+          go build -trimpath -buildmode=c-archive -o "${RUNNER_TEMP}/libR3KBSync.a" ./cmd/r3bridge
+          test -s "${RUNNER_TEMP}/libR3KBSync.a"
+      - name: Build R3 experimental unsigned IPA
+        shell: bash
+        env:
+          R3_KBSYNC_ARCHIVE: ${{ runner.temp }}/libR3KBSync.a
+        run: |
+          set -euo pipefail
+          bash Resources/AuthFix/build.sh
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Asspp-AuthFix-R3-experimental-unsigned.ipa
+          shasum -a 256 artifacts/Asspp-AuthFix-R3-experimental-unsigned.ipa > artifacts/Asspp-AuthFix-R3-experimental-unsigned.ipa.sha256
+      - name: Upload experimental IPA and diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: Asspp-AuthFix-R3-experimental-unsigned
+          path: |
+            artifacts/Asspp-AuthFix-R3-experimental-unsigned.ipa
+            artifacts/Asspp-AuthFix-R3-experimental-unsigned.ipa.sha256
+            artifacts/build-info.json
+            artifacts/transport-tests.log
+            artifacts/sap-setup-probe-result.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload build errors
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R3-experimental-build-errors
+          path: artifacts/*.log
+          if-no-files-found: ignore
