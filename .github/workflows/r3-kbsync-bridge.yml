@@ -1,0 +1,51 @@
+name: R3 iOS KBSync bridge feasibility
+
+on:
+  push:
+    branches:
+      - r3-kbsync-experiment
+    paths:
+      - "Resources/R3/KBSyncBridge/**"
+      - ".github/workflows/r3-kbsync-bridge.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios-archive:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.0"
+      - name: Fetch pinned open-source KBSync generator
+        run: git clone --depth 1 --branch v2.7.0 https://github.com/majd/ipatool.git "${RUNNER_TEMP}/ipatool-upstream"
+      - name: Compile iOS arm64 C bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream="${RUNNER_TEMP}/ipatool-upstream"
+          mkdir -p "${upstream}/cmd/r3bridge"
+          cp Resources/R3/KBSyncBridge/main.go "${upstream}/cmd/r3bridge/main.go"
+          cd "${upstream}"
+          export GOOS=ios
+          export GOARCH=arm64
+          export CGO_ENABLED=1
+          export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
+          export CC="$(xcrun --sdk iphoneos --find clang)"
+          export CGO_CFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
+          export CGO_LDFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
+          go build -trimpath -buildmode=c-archive -o "${RUNNER_TEMP}/libR3KBSync.a" ./cmd/r3bridge
+          test -s "${RUNNER_TEMP}/libR3KBSync.a"
+          xcrun nm -g "${RUNNER_TEMP}/libR3KBSync.a" | grep -F "R3GenerateKBSync" | head -3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: R3-KBSync-iOS-bridge-experiment
+          path: |
+            ${{ runner.temp }}/libR3KBSync.a
+            ${{ runner.temp }}/libR3KBSync.h
+          if-no-files-found: error
+          retention-days: 7
