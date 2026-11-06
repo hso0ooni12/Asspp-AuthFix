@@ -1,0 +1,12 @@
+{
+  "name": "Tahakom IPA Cloud",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "postCreateCommand": "bash Resources/Scripts/cloud-ipa-setup.sh",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}
