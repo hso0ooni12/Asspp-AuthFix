@@ -60,11 +60,11 @@ final class SAPSetupTransportTests: XCTestCase {
 
     func testNumericDiagnosticsPreserveRealPOSIXCodeWithoutSecrets() {
         #if canImport(Network)
-            let error = HTTPClient.NWPOSIXError(.ETIMEDOUT, reason: "do-not-log@example.invalid secret")
-            XCTAssertEqual(SAPSetupTransport.diagnostic(error), "Network POSIX errno=\(POSIXErrorCode.ETIMEDOUT.rawValue)")
+            let networkError = HTTPClient.NWPOSIXError(.ETIMEDOUT, reason: "do-not-log@example.invalid secret")
+            XCTAssertEqual(SAPSetupTransport.diagnostic(networkError), "Network POSIX errno=\(POSIXErrorCode.ETIMEDOUT.rawValue)")
         #endif
-        let error = NSError(domain: "secret@example.invalid", code: 123, userInfo: [NSLocalizedDescriptionKey: "private password"])
-        XCTAssertEqual(SAPSetupTransport.diagnostic(error), "transport error code=123")
+        let genericError = NSError(domain: "secret@example.invalid", code: 123, userInfo: [NSLocalizedDescriptionKey: "private password"])
+        XCTAssertEqual(SAPSetupTransport.diagnostic(genericError), "transport error code=123")
     }
 
     func testNativeSessionHasNoSharedCookiesOrCredentialStorage() {
