@@ -15,11 +15,18 @@ import SwiftUI
 struct SettingView: View {
     @Environment(\.openURL) private var openURL
     @State private var vm = AppStore.this
+    #if os(iOS)
+        @AppStorage("Asspp.AutoPrepareDecrypt") private var autoPrepareDecrypt = false
+    #endif
 
     @State private var showDeviceIdWarning = false
     @State private var editingDeviceId = false
     @State private var deviceIdDraft = ""
     @State private var showResetConfirmation = false
+    #if os(iOS)
+        @State private var showClearPreparedConfirmation = false
+        @State private var decryptor = DecryptionCenter.shared
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -50,6 +57,33 @@ struct SettingView: View {
             } footer: {
                 Text("Demo mode redacts all accounts and sensitive information.")
             }
+
+            #if os(iOS)
+                Section {
+                    Toggle(isOn: $autoPrepareDecrypt) {
+                        Label("Auto Prepare Decrypt", systemImage: "lock.open.fill")
+                    }
+                    Button {
+                        showClearPreparedConfirmation = true
+                    } label: {
+                        Label("Clear Prepared Helpers", systemImage: "trash")
+                    }
+                    Text("Prepared IPA storage: \(ByteCountFormatter.string(fromByteCount: decryptor.preparedStorageSize, countStyle: .file))")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("IPA Decryption")
+                } footer: {
+                    Text("When a download finishes while Asspp is running, prepare its FairPlayed helper and offer sharing. Signing with eSign is still required. The prepared helpers remain available until cleared.")
+                }
+                .confirmationDialog("Remove all prepared FairPlayed helpers?", isPresented: $showClearPreparedConfirmation) {
+                    Button("Clear Prepared Helpers", role: .destructive) {
+                        decryptor.clearPreparedHelpers()
+                    }
+                } message: {
+                    Text("Downloaded original IPAs are kept. Only the generated, unsigned FairPlayed helper files are removed.")
+                }
+            #endif
 
             Section {
                 Text(ProcessInfo.processInfo.hostName)
