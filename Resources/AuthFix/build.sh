@@ -40,7 +40,7 @@ xcodebuild -workspace Asspp.xcworkspace -scheme Asspp -configuration Release \
   -derivedDataPath .build-authfix/DerivedData \
   -clonedSourcePackagesDirPath .build-authfix/SourcePackages \
   DEVELOPMENT_TEAM= CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
-  CODE_SIGN_ENTITLEMENTS= MARKETING_VERSION=4.2.4 CURRENT_PROJECT_VERSION=2026110702 \
+  CODE_SIGN_ENTITLEMENTS= MARKETING_VERSION=4.2.5 CURRENT_PROJECT_VERSION=2026110703 \
   PRODUCT_BUNDLE_IDENTIFIER=wiki.qaq.Asspp.AuthFix \
   INFOPLIST_KEY_CFBundleDisplayName='Asspp AuthFix' \
   "${extra_xcodebuild_flags[@]}" build 2>&1 | tee artifacts/build.log | xcbeautify
@@ -53,7 +53,7 @@ app = root / '.build-authfix/DerivedData/Build/Products/Release-iphoneos/Asspp.a
 if not app.is_dir():
     raise SystemExit('Expected iPhoneOS app was not built')
 info = plistlib.loads((app / 'Info.plist').read_bytes())
-expected = {'CFBundleShortVersionString': '4.2.4', 'CFBundleVersion': '2026110702', 'CFBundleIdentifier': 'wiki.qaq.Asspp.AuthFix'}
+expected = {'CFBundleShortVersionString': '4.2.5', 'CFBundleVersion': '2026110703', 'CFBundleIdentifier': 'wiki.qaq.Asspp.AuthFix'}
 for key, value in expected.items():
     if info.get(key) != value:
         raise SystemExit(f'Incorrect build metadata: {key}')
