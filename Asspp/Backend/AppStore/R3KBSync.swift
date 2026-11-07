@@ -31,6 +31,8 @@ enum R3KBSync {
         let value = String(cString: pointer)
         let knownFailures: Set<String> = [
             "input", "assets", "assets-timeout", "storeagent",
+            "storeagent-asset", "storeagent-runtime", "storeagent-init",
+            "storeagent-execute", "unicorn-unlinked", "unicorn-runtime",
             "guest", "guest-timeout", "empty",
         ]
         if value.hasPrefix("!R3:") {
