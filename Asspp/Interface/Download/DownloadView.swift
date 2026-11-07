@@ -80,6 +80,9 @@ private struct PackageManifestRow: View {
                     case .ready:
                         Label("Ready to Sign", systemImage: "checkmark.seal.fill")
                             .foregroundStyle(.green)
+                    case .signed:
+                        Label("Ready to Install", systemImage: "checkmark.shield.fill")
+                            .foregroundStyle(.green)
                     case let .failed(message):
                         Label(message, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red)
@@ -108,6 +111,14 @@ private struct PackageManifestRow: View {
                         decryptor.shareExisting(manifest)
                     } label: {
                         Label("Share Prepared IPA", systemImage: "square.and.arrow.up")
+                    }
+                }
+
+                if decryptor.signedURL(for: manifest) != nil {
+                    Button {
+                        decryptor.install(manifest)
+                    } label: {
+                        Label("Install Signed FairPlayed", systemImage: "square.and.arrow.down")
                     }
                 }
 
