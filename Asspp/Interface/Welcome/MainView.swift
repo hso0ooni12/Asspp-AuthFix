@@ -194,6 +194,9 @@ struct MainView: View {
             .sheet(item: $decryptor.sharePackage) { item in
                 AssppActivityShare(items: [item.url])
             }
+            .sheet(item: $decryptor.installer) { installer in
+                InstallerView(installer: installer)
+            }
         }
     }
 
@@ -214,6 +217,9 @@ struct MainView: View {
             .sidebarAdaptableTabView()
             .sheet(item: $decryptor.sharePackage) { item in
                 AssppActivityShare(items: [item.url])
+            }
+            .sheet(item: $decryptor.installer) { installer in
+                InstallerView(installer: installer)
             }
         }
     }
