@@ -207,13 +207,10 @@ struct MainView: View {
                 Tab("Accounts", systemImage: "person") { AccountView() }
                 Tab("Downloads", systemImage: "arrow.down.circle") { DownloadView() }
                     .badge(dvm.runningTaskCount)
-                Tab(role: .search) {
-                    SearchView()
-                }
+                Tab("Search", systemImage: "magnifyingglass") { SearchView() }
                 Tab("Settings", systemImage: "gear") { SettingView() }
             }
             .neverMinimizeTab()
-            .activateSearchWhenSearchTabSelected()
             .sidebarAdaptableTabView()
             .sheet(item: $decryptor.sharePackage) { item in
                 AssppActivityShare(items: [item.url])
