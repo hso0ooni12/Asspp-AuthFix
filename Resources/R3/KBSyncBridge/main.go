@@ -68,6 +68,19 @@ func R3GenerateKBSync(guid *C.char, accountDSID C.ulonglong) *C.char {
             return C.CString("!R3:guest-timeout")
         case strings.Contains(failure, "timed out"):
             return C.CString("!R3:guest-timeout")
+        case strings.Contains(failure, "unicorn is not linked"):
+            return C.CString("!R3:unicorn-unlinked")
+        case strings.Contains(failure, "load apple storeagent asset"):
+            return C.CString("!R3:storeagent-asset")
+        case strings.Contains(failure, "start storeagent runtime"):
+            if strings.Contains(failure, "unicorn") {
+                return C.CString("!R3:unicorn-runtime")
+            }
+            return C.CString("!R3:storeagent-runtime")
+        case strings.Contains(failure, "initialize storeagent global context"):
+            return C.CString("!R3:storeagent-init")
+        case strings.Contains(failure, "generate storeagent kbsync"):
+            return C.CString("!R3:storeagent-execute")
         case strings.Contains(failure, "storeagent"):
             return C.CString("!R3:storeagent")
         default:
