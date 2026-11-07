@@ -11,7 +11,6 @@ import Kingfisher
 import SwiftUI
 #if os(iOS)
 import ZIPFoundation
-import UniformTypeIdentifiers
 #endif
 
 #if canImport(AppKit) && !canImport(UIKit)
@@ -33,9 +32,7 @@ struct PackageView: View {
     #if os(iOS)
         @State private var installer: Installer?
         @State private var error: String = ""
-        @State private var templateReady = IPAStudioHelper.hasTemplate
         @State private var isPreparingDecryption = false
-        @State private var selectIPAStudioTemplate = false
         @State private var sharePreparedPackage: PreparedDecryptionPackage?
         @State private var decryptionError: String?
     #endif
@@ -116,29 +113,14 @@ struct PackageView: View {
                 #if os(iOS)
                     Section {
                         Button {
-                            if templateReady {
-                                prepareDecryptionHelper()
-                            } else {
-                                selectIPAStudioTemplate = true
-                            }
+                            prepareDecryptionHelper()
                         } label: {
                             Label(
-                                isPreparingDecryption ? "Preparing IPA Studio..." : "Decrypt IPA",
+                                isPreparingDecryption ? "Preparing FairPlayed..." : "Decrypt IPA",
                                 systemImage: "lock.open.fill"
                             )
                         }
                         .disabled(isPreparingDecryption)
-
-                        if templateReady {
-                            Button("Change IPA Studio Template") {
-                                selectIPAStudioTemplate = true
-                            }
-                            .font(.footnote)
-                        } else {
-                            Text("One-time setup: choose the original IPA Studio .ipa we built earlier. This file stays on your iPhone.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
 
                         if let decryptionError {
                             Text(decryptionError)
@@ -148,7 +130,7 @@ struct PackageView: View {
                     } header: {
                         Text("FairPlay Decryption")
                     } footer: {
-                        Text("Asspp prepares IPA Studio with this downloaded app inside. Share the new IPA with eSign, sign and install it, then open IPA Studio to decrypt and export. You need an Apple ID license for the target app.")
+                        Text("Asspp automatically combines this download with FairPlayed and exports a helper IPA. Sign and install it with eSign, open FairPlayed, tap Export, then Share. Your Apple ID must own the target app.")
                     }
                 #endif
 
@@ -246,21 +228,6 @@ struct PackageView: View {
         .formStyle(.grouped)
         .navigationTitle(pkg.package.software.name)
         #if os(iOS)
-            .fileImporter(isPresented: $selectIPAStudioTemplate, allowedContentTypes: [.item]) { result in
-                switch result {
-                case let .success(url):
-                    do {
-                        try IPAStudioHelper.importTemplate(from: url)
-                        templateReady = true
-                        decryptionError = nil
-                        prepareDecryptionHelper()
-                    } catch {
-                        decryptionError = error.localizedDescription
-                    }
-                case let .failure(error):
-                    decryptionError = error.localizedDescription
-                }
-            }
             .sheet(item: $sharePreparedPackage) { prepared in
                 AssppActivityShare(items: [prepared.url])
             }
@@ -280,7 +247,7 @@ struct PackageView: View {
             Task {
                 do {
                     let file = try await Task.detached(priority: .userInitiated) {
-                        try IPAStudioHelper.prepare(downloadedIPA: url, expectedBundleID: bundle, name: name, version: version)
+                        try FairPlayedHelper.prepare(downloadedIPA: url, expectedBundleID: bundle, name: name, version: version)
                     }.value
                     sharePreparedPackage = PreparedDecryptionPackage(url: file)
                 } catch {
@@ -308,58 +275,35 @@ private struct AssppActivityShare: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
-/// The user provides their own IPA Studio build once. No FairPlayed code or
-/// binary is embedded into Asspp or uploaded to a server.
-private enum IPAStudioHelper {
+/// CI bundles the pinned, empty FairPlayed shell with Asspp. No user file picker.
+private enum FairPlayedHelper {
     private static let fm = FileManager.default
     private static var base: URL {
-        documentsDirectory.appendingPathComponent("IPAStudio", isDirectory: true)
-    }
-    private static var template: URL {
-        base.appendingPathComponent("IPAStudioTemplate.ipa")
-    }
-    static var hasTemplate: Bool { fm.fileExists(atPath: template.path) }
-
-    static func importTemplate(from input: URL) throws {
-        let accessGranted = input.startAccessingSecurityScopedResource()
-        defer { if accessGranted { input.stopAccessingSecurityScopedResource() } }
-        let scratch = fm.temporaryDirectory.appendingPathComponent("StudioValidate-" + UUID().uuidString, isDirectory: true)
-        defer { try? fm.removeItem(at: scratch) }
-        try validateArchive(input)
-        try fm.unzipItem(at: input, to: scratch)
-        let app = try findApp(in: scratch)
-        let plist = try info(at: app)
-        let executable = (plist["CFBundleExecutable"] as? String ?? "").lowercased()
-        let displayName = (plist["CFBundleDisplayName"] as? String ?? "").lowercased()
-        let bundleID = (plist["CFBundleIdentifier"] as? String ?? "").lowercased()
-        guard executable.contains("fairplayed") || displayName.contains("ipa studio")
-            || displayName.contains("fairplayed") || bundleID.contains("fairplayed")
-            || bundleID.contains("ipastudio")
-        else { throw PreparationError.wrongTemplate }
-        try fm.createDirectory(at: base, withIntermediateDirectories: true)
-        let copy = base.appendingPathComponent(UUID().uuidString + ".ipa")
-        try fm.copyItem(at: input, to: copy)
-        if hasTemplate { try fm.removeItem(at: template) }
-        try fm.moveItem(at: copy, to: template)
+        documentsDirectory.appendingPathComponent("FairPlayed", isDirectory: true)
     }
 
     static func prepare(downloadedIPA: URL, expectedBundleID: String, name: String, version: String) throws -> URL {
-        guard hasTemplate else { throw PreparationError.missingTemplate }
+        guard let shell = Bundle.main.url(forResource: "FairPlayed-shell", withExtension: "zip")
+        else { throw PreparationError.missingShell }
         guard fm.fileExists(atPath: downloadedIPA.path) else { throw PreparationError.missingDownload }
-        let root = fm.temporaryDirectory.appendingPathComponent("StudioBuild-" + UUID().uuidString, isDirectory: true)
+        let root = fm.temporaryDirectory.appendingPathComponent("FairPlayedBuild-" + UUID().uuidString, isDirectory: true)
         defer { try? fm.removeItem(at: root) }
         let staged = root.appendingPathComponent("Staged", isDirectory: true)
         let input = root.appendingPathComponent("Input", isDirectory: true)
-        try validateArchive(template)
+        try validateArchive(shell)
         try validateArchive(downloadedIPA)
-        try fm.unzipItem(at: template, to: staged)
+        try fm.unzipItem(at: shell, to: staged)
         try fm.unzipItem(at: downloadedIPA, to: input)
-        let studio = try findApp(in: staged)
+        let helper = staged.appendingPathComponent("FairPlayed.app", isDirectory: true)
+        guard fm.fileExists(atPath: helper.appendingPathComponent("FairPlayed").path),
+              (try info(at: helper)["CFBundleExecutable"] as? String) == "FairPlayed"
+        else { throw PreparationError.invalidShell }
+        try configureHelper(at: helper, targetName: name)
         let target = try findApp(in: input)
         guard (try info(at: target)["CFBundleIdentifier"] as? String) == expectedBundleID else {
             throw PreparationError.bundleMismatch
         }
-        let embedded = studio.appendingPathComponent("EmbeddedPayload", isDirectory: true)
+        let embedded = helper.appendingPathComponent("EmbeddedPayload", isDirectory: true)
         if fm.fileExists(atPath: embedded.path) { try fm.removeItem(at: embedded) }
         try fm.createDirectory(at: embedded, withIntermediateDirectories: true)
 
@@ -371,10 +315,14 @@ private enum IPAStudioHelper {
         if fm.fileExists(atPath: watch.path) { try fm.removeItem(at: watch) }
         try replicateSINF(in: copied)
 
+        let payload = staged.appendingPathComponent("Payload", isDirectory: true)
+        try fm.createDirectory(at: payload, withIntermediateDirectories: true)
+        try fm.moveItem(at: helper, to: payload.appendingPathComponent("FairPlayed.app", isDirectory: true))
+
         let outputs = base.appendingPathComponent("Prepared", isDirectory: true)
         try fm.createDirectory(at: outputs, withIntermediateDirectories: true)
         let output = outputs.appendingPathComponent(
-            safePart(name) + "-" + safePart(version) + "-IPAStudio-" + String(UUID().uuidString.prefix(8)) + ".ipa"
+            safePart(name) + "-" + safePart(version) + "-FairPlayed-" + String(UUID().uuidString.prefix(8)) + ".ipa"
         )
         try fm.zipItem(at: staged, to: output, shouldKeepParent: false, compressionMethod: .deflate)
         let packed = try Archive(url: output, accessMode: .read)
@@ -407,9 +355,22 @@ private enum IPAStudioHelper {
         return dict
     }
 
+    private static func configureHelper(at app: URL, targetName: String) throws {
+        let location = app.appendingPathComponent("Info.plist")
+        var plist = try info(at: app)
+        // Keep the helper bundle ID independent of the target App Store app.
+        // Match the known-good per-app FairPlayed packaging used for Tahakom.
+        plist["CFBundleIdentifier"] = "com.thehacker.ipastudio.helper"
+        plist["CFBundleDisplayName"] = targetName + " Decryptor"
+        plist["UIFileSharingEnabled"] = true
+        plist["LSSupportsOpeningDocumentsInPlace"] = true
+        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+        try data.write(to: location, options: .atomic)
+    }
+
     private static func replicateSINF(in app: URL) throws {
         let manifest = app.appendingPathComponent("SC_Info/Manifest.plist")
-        guard fm.fileExists(atPath: manifest.path) else { return }
+        guard fm.fileExists(atPath: manifest.path) else { throw PreparationError.invalidLicense }
         let data = try Data(contentsOf: manifest)
         guard let dict = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
               let first = (dict["SinfPaths"] as? [String])?.first,
@@ -417,6 +378,8 @@ private enum IPAStudioHelper {
         else { throw PreparationError.invalidLicense }
         let src = app.appendingPathComponent(first)
         guard fm.fileExists(atPath: src.path) else { throw PreparationError.invalidLicense }
+        guard let size = try? src.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0
+        else { throw PreparationError.invalidLicense }
         for rel in (dict["SinfReplicationPaths"] as? [String]) ?? [] {
             guard safePath(rel) else { throw PreparationError.unsafeArchive }
             if rel.hasPrefix("Watch/") { continue }
@@ -439,19 +402,19 @@ private enum IPAStudioHelper {
     }
 
     private enum PreparationError: LocalizedError {
-        case missingTemplate, missingDownload, notIPA, wrongTemplate
+        case missingShell, missingDownload, notIPA, invalidShell
         case bundleMismatch, invalidLicense, unsafeArchive, emptyPayload
 
         var errorDescription: String? {
             switch self {
-            case .missingTemplate: "Choose your original IPA Studio IPA first."
+            case .missingShell: "FairPlayed is missing from this build. Install the complete R8 IPA."
             case .missingDownload: "The downloaded IPA is missing."
             case .notIPA: "This is not a valid IPA containing one iOS app."
-            case .wrongTemplate: "Choose the IPA Studio / FairPlayed helper IPA, not an App Store IPA."
+            case .invalidShell: "The built-in FairPlayed helper is invalid."
             case .bundleMismatch: "The download's bundle ID does not match this app."
             case .invalidLicense: "Missing or invalid FairPlay license data."
             case .unsafeArchive: "The IPA contains an unsafe file path."
-            case .emptyPayload: "The prepared IPA Studio has no embedded app."
+            case .emptyPayload: "The prepared FairPlayed IPA has no embedded app."
             }
         }
     }
