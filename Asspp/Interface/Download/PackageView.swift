@@ -130,7 +130,7 @@ struct PackageView: View {
                     } header: {
                         Text("FairPlay Decryption")
                     } footer: {
-                        Text("Asspp automatically combines this download with FairPlayed and exports a helper IPA. Sign and install it with eSign, open FairPlayed, tap Export, then Share. Your Apple ID must own the target app.")
+                        Text("Asspp prepares a FairPlayed helper for this download. Sign and install the helper with eSign. When opened, it decrypts automatically and shows the Share sheet for the complete IPA. If any encrypted component fails, no partial IPA is exported. Your Apple ID must own the target app.")
                     }
                 #endif
 
@@ -407,7 +407,7 @@ private enum FairPlayedHelper {
 
         var errorDescription: String? {
             switch self {
-            case .missingShell: "FairPlayed is missing from this build. Install the complete R8 IPA."
+            case .missingShell: "FairPlayed is missing from this build. Install the complete R10 IPA."
             case .missingDownload: "The downloaded IPA is missing."
             case .notIPA: "This is not a valid IPA containing one iOS app."
             case .invalidShell: "The built-in FairPlayed helper is invalid."
