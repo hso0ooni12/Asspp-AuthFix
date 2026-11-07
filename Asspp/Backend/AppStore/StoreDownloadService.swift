@@ -222,10 +222,15 @@ enum StoreDownloadService {
         guard !version.isEmpty, guid.count == 12,
               let suffix = UInt32(guid.suffix(8), radix: 16)
         else { throw StoreDownloadError.invalidPackage }
-        let blob = await Task.detached(priority: .utility) {
+        // KBSync may fail before any request reaches Apple's download server.
+        // Log a fixed stage code so failures can be diagnosed without leaking
+        // credentials, device identifiers, the blob, or a signed package URL.
+        logger.info("Store download [\(trace)]: kbsync preparation starting")
+        let generation = await Task.detached(priority: .utility) {
             R3KBSync.generate(guid: guid, directoryServicesIdentifier: dsid)
         }.value
-        guard let blob else { throw StoreDownloadError.invalidPackage }
+        logger.info("Store download [\(trace)]: kbsync status=\(generation.status)")
+        guard let blob = generation.blob else { throw StoreDownloadError.invalidPackage }
 
         var serial = Data([0x54, 0xc8, 0xb0, 0xa9, 0x88])
         serial.append(contentsOf: [
