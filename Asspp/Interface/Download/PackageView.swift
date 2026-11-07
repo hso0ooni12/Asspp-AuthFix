@@ -32,9 +32,7 @@ struct PackageView: View {
     #if os(iOS)
         @State private var installer: Installer?
         @State private var error: String = ""
-        @State private var isPreparingDecryption = false
-        @State private var sharePreparedPackage: PreparedDecryptionPackage?
-        @State private var decryptionError: String?
+        @State private var decryptor = DecryptionCenter.shared
     #endif
     #if os(macOS)
         @State private var copied = false
@@ -113,19 +111,28 @@ struct PackageView: View {
                 #if os(iOS)
                     Section {
                         Button {
-                            prepareDecryptionHelper()
+                            decryptor.prepare(pkg)
                         } label: {
                             Label(
-                                isPreparingDecryption ? "Preparing FairPlayed..." : "Decrypt IPA",
+                                decryptor.status(for: pkg) == .preparing ? "Preparing FairPlayed..." : "Decrypt IPA",
                                 systemImage: "lock.open.fill"
                             )
                         }
-                        .disabled(isPreparingDecryption)
+                        .disabled(decryptor.status(for: pkg) == .preparing)
 
-                        if let decryptionError {
-                            Text(decryptionError)
-                                .font(.footnote)
-                                .foregroundStyle(.red)
+                        switch decryptor.status(for: pkg) {
+                        case .preparing:
+                            ProgressView("Preparing signed helper package")
+                        case .ready:
+                            Button {
+                                decryptor.shareExisting(pkg)
+                            } label: {
+                                Label("Share Prepared IPA", systemImage: "square.and.arrow.up")
+                            }
+                        case let .failed(message):
+                            Text(message).font(.footnote).foregroundStyle(.red)
+                        case .idle:
+                            EmptyView()
                         }
                     } header: {
                         Text("FairPlay Decryption")
@@ -227,45 +234,16 @@ struct PackageView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(pkg.package.software.name)
-        #if os(iOS)
-            .sheet(item: $sharePreparedPackage) { prepared in
-                AssppActivityShare(items: [prepared.url])
-            }
-        #endif
     }
-
-    #if os(iOS)
-        private func prepareDecryptionHelper() {
-            guard !isPreparingDecryption else { return }
-            isPreparingDecryption = true
-            decryptionError = nil
-            let url = pkg.targetLocation
-            let bundle = archive.software.bundleID
-            let name = archive.software.name
-            let version = archive.software.version
-
-            Task {
-                do {
-                    let file = try await Task.detached(priority: .userInitiated) {
-                        try FairPlayedHelper.prepare(downloadedIPA: url, expectedBundleID: bundle, name: name, version: version)
-                    }.value
-                    sharePreparedPackage = PreparedDecryptionPackage(url: file)
-                } catch {
-                    decryptionError = error.localizedDescription
-                }
-                isPreparingDecryption = false
-            }
-        }
-    #endif
 }
 
 #if os(iOS)
-private struct PreparedDecryptionPackage: Identifiable {
+struct PreparedDecryptionPackage: Identifiable {
     let url: URL
     var id: String { url.path }
 }
 
-private struct AssppActivityShare: UIViewControllerRepresentable {
+struct AssppActivityShare: UIViewControllerRepresentable {
     let items: [Any]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
@@ -275,8 +253,110 @@ private struct AssppActivityShare: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
+enum DecryptionPreparationStatus: Equatable {
+    case idle, preparing, ready, failed(String)
+}
+
+/// Shared, main-actor coordination prevents duplicate helper exports from the
+/// detail view, context menu, swipe actions and automatic post-download flow.
+@MainActor
+@Observable
+final class DecryptionCenter {
+    static let shared = DecryptionCenter()
+
+    var statuses: [UUID: DecryptionPreparationStatus] = [:]
+    var sharePackage: PreparedDecryptionPackage?
+
+    @ObservationIgnored private var running: Set<UUID> = []
+
+    private init() {}
+
+    func status(for manifest: PackageManifest) -> DecryptionPreparationStatus {
+        if let stored = statuses[manifest.id] { return stored }
+        return preparedURL(for: manifest) == nil ? .idle : .ready
+    }
+
+    func preparedURL(for manifest: PackageManifest) -> URL? {
+        guard let path = UserDefaults.standard.string(forKey: key(for: manifest)) else { return nil }
+        let file = URL(fileURLWithPath: path)
+        return FileManager.default.fileExists(atPath: file.path) ? file : nil
+    }
+
+    func shareExisting(_ manifest: PackageManifest) {
+        guard let file = preparedURL(for: manifest) else {
+            statuses[manifest.id] = .failed("Prepared IPA not found. Please prepare it again.")
+            return
+        }
+        sharePackage = PreparedDecryptionPackage(url: file)
+    }
+
+    func prepare(_ manifest: PackageManifest) {
+        guard manifest.completed, running.insert(manifest.id).inserted else { return }
+        statuses[manifest.id] = .preparing
+        let input = manifest.targetLocation
+        let bundleID = manifest.package.software.bundleID
+        let appName = manifest.package.software.name
+        let appVersion = manifest.package.software.version
+        let storageKey = key(for: manifest)
+        let id = manifest.id
+
+        Task {
+            do {
+                let output = try await Task.detached(priority: .userInitiated) {
+                    try FairPlayedHelper.prepare(
+                        downloadedIPA: input,
+                        expectedBundleID: bundleID,
+                        name: appName,
+                        version: appVersion
+                    )
+                }.value
+                // Keep a single prepared helper per download, but never touch
+                // anything the user has already saved outside Asspp's folder.
+                if let previous = UserDefaults.standard.string(forKey: storageKey),
+                   previous != output.path,
+                   URL(fileURLWithPath: previous).deletingLastPathComponent() ==
+                       documentsDirectory.appendingPathComponent("FairPlayed/Prepared", isDirectory: true) {
+                    try? FileManager.default.removeItem(atPath: previous)
+                }
+                UserDefaults.standard.set(output.path, forKey: storageKey)
+                statuses[id] = .ready
+                sharePackage = PreparedDecryptionPackage(url: output)
+            } catch {
+                statuses[id] = .failed(error.localizedDescription)
+            }
+            running.remove(id)
+        }
+    }
+
+    private func key(for manifest: PackageManifest) -> String {
+        "Asspp.PreparedFairPlayed.\(manifest.id.uuidString)"
+    }
+
+    var preparedStorageSize: Int64 {
+        let dir = documentsDirectory.appendingPathComponent("FairPlayed/Prepared", isDirectory: true)
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return files.reduce(0) { sum, file in
+            sum + Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+    }
+
+    func clearPreparedHelpers() {
+        let dir = documentsDirectory.appendingPathComponent("FairPlayed/Prepared", isDirectory: true)
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.pathExtension.lowercased() == "ipa" {
+            try? FileManager.default.removeItem(at: file)
+        }
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("Asspp.PreparedFairPlayed.") {
+            defaults.removeObject(forKey: key)
+        }
+        statuses.removeAll()
+        sharePackage = nil
+    }
+}
+
 /// CI bundles the pinned, empty FairPlayed shell with Asspp. No user file picker.
-private enum FairPlayedHelper {
+enum FairPlayedHelper {
     private static let fm = FileManager.default
     private static var base: URL {
         documentsDirectory.appendingPathComponent("FairPlayed", isDirectory: true)
@@ -407,7 +487,7 @@ private enum FairPlayedHelper {
 
         var errorDescription: String? {
             switch self {
-            case .missingShell: "FairPlayed is missing from this build. Install the complete R10 IPA."
+            case .missingShell: "FairPlayed is missing from this build. Install the complete R11 IPA."
             case .missingDownload: "The downloaded IPA is missing."
             case .notIPA: "This is not a valid IPA containing one iOS app."
             case .invalidShell: "The built-in FairPlayed helper is invalid."
