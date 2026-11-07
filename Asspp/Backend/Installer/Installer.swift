@@ -18,6 +18,9 @@ class Installer: Identifiable, @unchecked Sendable {
     @ObservationIgnored let app: Application
     @ObservationIgnored let archive: AppStore.AppPackage
     @ObservationIgnored let port = Int.random(in: 4000 ... 8000)
+    @ObservationIgnored let installBundleID: String?
+    @ObservationIgnored let installName: String?
+    @ObservationIgnored let installVersion: String?
 
     enum Status {
         case ready
@@ -30,10 +33,15 @@ class Installer: Identifiable, @unchecked Sendable {
     @MainActor
     var status: Status = .ready
 
-    init(archive: AppStore.AppPackage, path packagePath: URL) async throws {
+    init(archive: AppStore.AppPackage, path packagePath: URL,
+         installBundleID: String? = nil, installName: String? = nil,
+         installVersion: String? = nil) async throws {
         let id: UUID = .init()
         self.id = id
         self.archive = archive
+        self.installBundleID = installBundleID
+        self.installName = installName
+        self.installVersion = installVersion
         app = try await Self.setupApp(port: port, secured: true)
         logger.info("Installer app setup completed for ID: \(id)")
 
@@ -99,6 +107,9 @@ class Installer: Identifiable, @unchecked Sendable {
 
         let id: UUID = .init()
         self.id = id
+        installBundleID = nil
+        installName = nil
+        installVersion = nil
         archive = .init(software: .init(
             id: .random(),
             bundleID: "",
