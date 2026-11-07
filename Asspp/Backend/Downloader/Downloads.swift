@@ -144,6 +144,13 @@ class Downloads {
                                     request.state.complete()
                                     self.refreshRunningTaskCount()
                                     self.saveManifests()
+                                    #if os(iOS)
+                                        // Optional foreground preparation; signing and installation
+                                        // of the resulting helper remain separate user actions.
+                                        if UserDefaults.standard.bool(forKey: "Asspp.AutoPrepareDecrypt") {
+                                            DecryptionCenter.shared.prepare(request)
+                                        }
+                                    #endif
                                 }
                             } catch {
                                 await MainActor.run {
