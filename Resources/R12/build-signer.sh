@@ -26,8 +26,10 @@ objects=()
 for src in "$zsign_repo"/src/*.cpp "$zsign_repo"/src/common/*.cpp "$GITHUB_WORKSPACE"/Resources/R12/SignerBridge.cpp; do
   [[ "${src##*/}" == "zsign.cpp" ]] && continue
   obj="$build/$(basename "$src").o"
+  # Unicorn TCI also exports a `crc32` symbol. Namespace zsign's bundled
+  # zlib symbol (and every consumer) to avoid a duplicate at the app link.
   "$cxx" -std=c++11 -O2 -fPIC -target arm64-apple-ios17.0 -isysroot "$sdk" \
-    -DZSIGN_VERSION=1.0.0 "${includes[@]}" -c "$src" -o "$obj"
+    -DZSIGN_VERSION=1.0.0 -Dcrc32=asspp_signer_crc32 "${includes[@]}" -c "$src" -o "$obj"
   objects+=("$obj")
 done
 for src in "$zsign_repo"/src/third-party/zlib/*.c \
@@ -36,7 +38,7 @@ for src in "$zsign_repo"/src/third-party/zlib/*.c \
   "$zsign_repo"/src/third-party/minizip/unzip.c; do
   obj="$build/$(basename "$src").o"
   "$cc" -O2 -fPIC -target arm64-apple-ios17.0 -isysroot "$sdk" \
-    "${includes[@]}" -c "$src" -o "$obj"
+    -Dcrc32=asspp_signer_crc32 "${includes[@]}" -c "$src" -o "$obj"
   objects+=("$obj")
 done
 
@@ -45,4 +47,5 @@ test -s "$build/libAssppSigner.a"
 test -s "$forge_repo/vendor/openssl/libcrypto.a"
 test -s "$forge_repo/vendor/openssl/libssl.a"
 xcrun nm -g "$build/libAssppSigner.a" | grep -F '_AssppSignIPA'
+xcrun nm -g "$build/libAssppSigner.a" | grep -F '_asspp_signer_crc32'
 echo "R12 iOS on-device signer compiled with pinned zsign and OpenSSL"
