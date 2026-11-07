@@ -1,0 +1,188 @@
+name: R5 Experimental iOS IPA
+
+on:
+  push:
+    branches: [r5-unicorn-ios-link]
+    paths:
+      - "Asspp/Backend/AppStore/**"
+      - "Resources/AuthFix/build.sh"
+      - "Resources/R3/KBSyncBridge/**"
+      - ".github/workflows/r5-ipa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asspp-r5-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-r5-ios:
+    runs-on: macos-26
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.0"
+      - name: Select Xcode and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          best_path=""
+          best_ver=""
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            case "$app" in *beta*|*Beta*|*_RC*) continue ;; esac
+            ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true)
+            [ -n "$ver" ] || continue
+            if [ -z "$best_ver" ] || [ "$(printf '%s\n%s\n' "$best_ver" "$ver" | sort -V | tail -1)" = "$ver" ]; then
+              best_ver="$ver"
+              best_path="$app"
+            fi
+          done
+          [ -n "$best_path" ] || { echo 'No Xcode found'; exit 1; }
+          sudo xcode-select -s "$best_path"
+          xcodebuild -version
+          command -v xcbeautify >/dev/null || brew install xcbeautify
+      - name: Build pinned iOS arm64 KBSync bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream="${RUNNER_TEMP}/ipatool-upstream"
+          git clone --depth 1 --branch v2.7.0 https://github.com/majd/ipatool.git "$upstream"
+          mkdir -p "$upstream/cmd/r3bridge"
+          cp Resources/R3/KBSyncBridge/main.go "$upstream/cmd/r3bridge/main.go"
+          cd "$upstream"
+          export GOOS=ios GOARCH=arm64 CGO_ENABLED=1
+          export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
+          export CC="$(xcrun --sdk iphoneos --find clang)"
+          export CGO_CFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
+          export CGO_LDFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
+          go build -trimpath -buildmode=c-archive -o "${RUNNER_TEMP}/libR3KBSync.a" ./cmd/r3bridge
+          test -s "${RUNNER_TEMP}/libR3KBSync.a"
+      - name: Compile patched iOS Unicorn 2.1.4 (static arm64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v cmake >/dev/null || brew install cmake
+          unicorn_dir="${RUNNER_TEMP}/r5-unicorn"
+          mkdir -p "${unicorn_dir}"
+          curl --fail --location --retry 3 --silent --show-error \
+            https://github.com/unicorn-engine/unicorn/archive/refs/tags/2.1.4.tar.gz \
+            -o "${unicorn_dir}/unicorn.tar.gz"
+          echo "ea8863f095a0136388694e5a6063afd9bb7650e30243dd6251af59c5ce5601f4  ${unicorn_dir}/unicorn.tar.gz" \
+            | shasum -a 256 -c -
+          tar -xzf "${unicorn_dir}/unicorn.tar.gz" -C "${unicorn_dir}"
+          patch -d "${unicorn_dir}/unicorn-2.1.4" -p1 \
+            < "${RUNNER_TEMP}/ipatool-upstream/tools/patches/unicorn-ios.patch"
+          ios_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          ARCHFLAGS="-arch arm64" cmake \
+            -S "${unicorn_dir}/unicorn-2.1.4" -B "${unicorn_dir}/build" \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="${ios_sdk}" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+            -DCMAKE_C_FLAGS="-target arm64-apple-ios17.0" \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+            -DUNICORN_ARCH=x86 -DUNICORN_BUILD_TESTS=OFF -DUNICORN_INSTALL=OFF
+          cmake --build "${unicorn_dir}/build" --parallel "$(sysctl -n hw.ncpu)"
+          test -s "${unicorn_dir}/build/libunicorn.a"
+          xcrun nm -g "${unicorn_dir}/build/libunicorn.a" \
+            | grep -F ' _uc_version' | head -1
+      - name: Build R5 experimental unsigned IPA
+        shell: bash
+        env:
+          R3_KBSYNC_ARCHIVE: ${{ runner.temp }}/libR3KBSync.a
+          R5_UNICORN_ARCHIVE: ${{ runner.temp }}/r5-unicorn/build/libunicorn.a
+        run: |
+          set -euo pipefail
+          bash Resources/AuthFix/build.sh
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa
+          shasum -a 256 artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa > artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa.sha256
+      - name: Verify Unicorn symbols exist in the final IPA executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          executable=".build-authfix/DerivedData/Build/Products/Release-iphoneos/Asspp.app/Asspp"
+          test -s "${executable}"
+          xcrun nm -gU "${executable}" > "${RUNNER_TEMP}/r5-linked-exports.txt"
+          grep -Eq '[[:space:]]_uc_version
+        uses: actions/upload-artifact@v4
+        with:
+          name: Asspp-AuthFix-R5-download-diagnostics-unsigned
+          path: |
+            artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa
+            artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa.sha256
+            artifacts/build-info.json
+            artifacts/transport-tests.log
+            artifacts/sap-setup-probe-result.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload build errors
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R5-experimental-build-errors
+          path: artifacts/*.log
+          if-no-files-found: ignore
+ "${RUNNER_TEMP}/r5-linked-exports.txt"
+          grep -Eq '[[:space:]]_uc_open
+        uses: actions/upload-artifact@v4
+        with:
+          name: Asspp-AuthFix-R5-download-diagnostics-unsigned
+          path: |
+            artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa
+            artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa.sha256
+            artifacts/build-info.json
+            artifacts/transport-tests.log
+            artifacts/sap-setup-probe-result.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload build errors
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R5-experimental-build-errors
+          path: artifacts/*.log
+          if-no-files-found: ignore
+ "${RUNNER_TEMP}/r5-linked-exports.txt"
+          grep -Eq '[[:space:]]_R3GenerateKBSync
+        uses: actions/upload-artifact@v4
+        with:
+          name: Asspp-AuthFix-R5-download-diagnostics-unsigned
+          path: |
+            artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa
+            artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa.sha256
+            artifacts/build-info.json
+            artifacts/transport-tests.log
+            artifacts/sap-setup-probe-result.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload build errors
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R5-experimental-build-errors
+          path: artifacts/*.log
+          if-no-files-found: ignore
+ "${RUNNER_TEMP}/r5-linked-exports.txt"
+          echo "Unicorn API and KBSync bridge are exported by the iOS application"
+      - name: Upload experimental IPA and diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: Asspp-AuthFix-R5-download-diagnostics-unsigned
+          path: |
+            artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa
+            artifacts/Asspp-AuthFix-R5-download-diagnostics-unsigned.ipa.sha256
+            artifacts/build-info.json
+            artifacts/transport-tests.log
+            artifacts/sap-setup-probe-result.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload build errors
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R5-experimental-build-errors
+          path: artifacts/*.log
+          if-no-files-found: ignore
