@@ -7,6 +7,9 @@
 
 import ApplePackage
 import SwiftUI
+#if os(iOS)
+import UniformTypeIdentifiers
+#endif
 
 #if canImport(UIKit)
     import UIKit
@@ -26,6 +29,13 @@ struct SettingView: View {
     #if os(iOS)
         @State private var showClearPreparedConfirmation = false
         @State private var decryptor = DecryptionCenter.shared
+        @State private var signer = SigningCenter.shared
+        @State private var importingIdentity = false
+        @State private var importingItem: SigningCenter.Item = .certificate
+        @State private var signingPassword = ""
+        @State private var signingMessage = ""
+        @State private var showSigningMessage = false
+        @State private var showRemoveSignerConfirmation = false
     #endif
 
     var body: some View {
@@ -60,8 +70,80 @@ struct SettingView: View {
 
             #if os(iOS)
                 Section {
+                    HStack {
+                        Label("Certificate (.p12)", systemImage: "checkmark.shield")
+                        Spacer()
+                        Text(signer.hasCertificate ? "Imported" : "Missing")
+                            .foregroundStyle(signer.hasCertificate ? Color.green : Color.secondary)
+                    }
+                    Button("Import P12 Certificate") {
+                        importingItem = .certificate
+                        importingIdentity = true
+                    }
+                    HStack {
+                        Label("Provisioning Profile", systemImage: "doc.badge.gearshape")
+                        Spacer()
+                        Text(signer.hasProfile ? "Imported" : "Missing")
+                            .foregroundStyle(signer.hasProfile ? Color.green : Color.secondary)
+                    }
+                    Button("Import Mobileprovision") {
+                        importingItem = .profile
+                        importingIdentity = true
+                    }
+                    SecureField(signer.hasPassword ? "P12 password saved • enter to replace" : "P12 certificate password", text: $signingPassword)
+                        .textContentType(.password)
+                    Button(signer.hasPassword ? "Update P12 Password" : "Save P12 Password") {
+                        do {
+                            try signer.savePassword(signingPassword)
+                            signingPassword = ""
+                            signingMessage = "Signing password saved securely on this device."
+                        } catch {
+                            signingMessage = error.localizedDescription
+                        }
+                        showSigningMessage = true
+                    }
+                    HStack {
+                        Image(systemName: signer.isConfigured ? "checkmark.circle.fill" : "exclamationmark.circle")
+                            .foregroundStyle(signer.isConfigured ? Color.green : Color.orange)
+                        Text(signer.isConfigured ? "Auto Sign Ready" : "Complete the 3 fields to enable Auto Sign")
+                            .font(.footnote)
+                    }
+                    if signer.hasCertificate || signer.hasProfile || signer.hasPassword {
+                        Button("Remove Signing Identity", role: .destructive) {
+                            showRemoveSignerConfirmation = true
+                        }
+                    }
+                } header: {
+                    Text("On-device IPA Signing")
+                } footer: {
+                    Text("Your Apple Account remains for App Store downloads. The P12 certificate, profile, and password are stored in this device's Keychain, never uploaded to a server. Once configured, Decrypt also signs FairPlayed automatically. Your profile must support this device and the helper bundle ID.")
+                }
+                .fileImporter(isPresented: $importingIdentity, allowedContentTypes: [.item]) { result in
+                    do {
+                        let url = try result.get()
+                        try signer.importFile(url, as: importingItem)
+                        signingMessage = "Signing file imported."
+                    } catch {
+                        signingMessage = error.localizedDescription
+                    }
+                    showSigningMessage = true
+                }
+                .alert("Signing Identity", isPresented: $showSigningMessage) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text(signingMessage)
+                }
+                .confirmationDialog("Remove locally stored signing credentials?", isPresented: $showRemoveSignerConfirmation) {
+                    Button("Remove Signing Identity", role: .destructive) {
+                        signer.clear()
+                    }
+                } message: {
+                    Text("The existing signed IPA files will not be removed.")
+                }
+
+                Section {
                     Toggle(isOn: $autoPrepareDecrypt) {
-                        Label("Auto Prepare Decrypt", systemImage: "lock.open.fill")
+                        Label("Auto Prepare & Sign Decrypt", systemImage: "lock.open.fill")
                     }
                     Button {
                         showClearPreparedConfirmation = true
@@ -74,14 +156,14 @@ struct SettingView: View {
                 } header: {
                     Text("IPA Decryption")
                 } footer: {
-                    Text("When a download finishes while Asspp is running, prepare its FairPlayed helper and offer sharing. Signing with eSign is still required. The prepared helpers remain available until cleared.")
+                    Text("When a download finishes, Asspp can prepare its FairPlayed helper and sign it automatically when an identity is configured. Tap Install Signed FairPlayed from the download to begin installation. If signing is unavailable, an unsigned helper is shared instead.")
                 }
                 .confirmationDialog("Remove all prepared FairPlayed helpers?", isPresented: $showClearPreparedConfirmation) {
                     Button("Clear Prepared Helpers", role: .destructive) {
                         decryptor.clearPreparedHelpers()
                     }
                 } message: {
-                    Text("Downloaded original IPAs are kept. Only the generated, unsigned FairPlayed helper files are removed.")
+                    Text("Downloaded original IPAs and saved signing credentials are kept. Generated FairPlayed IPA files (prepared and signed) are removed.")
                 }
             #endif
 
