@@ -1,0 +1,21 @@
+diff --git a/FairPlayed/FairPlayed/fpcore.c b/FairPlayed/FairPlayed/fpcore.c
+--- a/FairPlayed/FairPlayed/fpcore.c
++++ b/FairPlayed/FairPlayed/fpcore.c
+@@ -275,5 +275,14 @@ static bool attempt_looks_decrypted(const fp_attempt_t *a) {
+     // Encrypted text has ~8.0 bits/byte regardless of size; decrypted arm64 code stays below 7.5.
+-    // Require only one new RET/PACIBSP word so tiny (1-page) binaries are not rejected.
+-    return a->mremap_ret == 0 && a->pages_ok == a->pages_total && a->changed &&
+-           a->ent_before > 7.9 && a->ent_after < 7.5 && a->ret_after > a->ret_before;
++    // Normal code sections should gain at least one RET/PACIBSP instruction.
++    // Tiny one-page stub frameworks may contain no executable return instruction,
++    // despite a successful FairPlay remap and a substantial entropy collapse.
++    // Only accept that exception when the entire single page was read, the
++    // ciphertext changed, and the recovered entropy is below 3 bits/byte.
++    bool pages_ok = a->mremap_ret == 0 && a->pages_total > 0 &&
++                    a->pages_ok == a->pages_total && a->changed;
++    bool entropy_ok = a->ent_before > 7.9 && a->ent_after < 7.5;
++    bool has_new_ret = a->ret_after > a->ret_before;
++    bool one_page_stub = a->pages_total == 1 && a->ret_before == 0 &&
++                         a->ret_after == 0 && a->ent_after < 3.0;
++    return pages_ok && entropy_ok && (has_new_ret || one_page_stub);
+ }
