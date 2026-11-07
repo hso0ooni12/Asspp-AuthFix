@@ -175,22 +175,24 @@ struct MainView: View {
 #else
     private struct LegacyTabMainView: View {
         @State var dvm = Downloads.this
+        @State private var decryptor = DecryptionCenter.shared
 
         var body: some View {
             TabView {
-                WelcomeView()
-                    .tabItem { Label("Home", systemImage: "house") }
                 AccountView()
                     .tabItem { Label("Accounts", systemImage: "person") }
-                SearchView()
-                    .tabItem { Label("Search", systemImage: "magnifyingglass") }
                 DownloadView()
                     .tabItem {
                         Label("Downloads", systemImage: "arrow.down.circle")
                     }
                     .badge(dvm.runningTaskCount) // putting badge inside will not work on iOS versions before 18
+                SearchView()
+                    .tabItem { Label("Search", systemImage: "magnifyingglass") }
                 SettingView()
                     .tabItem { Label("Settings", systemImage: "gear") }
+            }
+            .sheet(item: $decryptor.sharePackage) { item in
+                AssppActivityShare(items: [item.url])
             }
         }
     }
@@ -198,21 +200,24 @@ struct MainView: View {
     @available(iOS 18.0, *)
     struct NewMainView: View {
         @State var dvm = Downloads.this
+        @State private var decryptor = DecryptionCenter.shared
 
         var body: some View {
             TabView {
-                Tab("Home", systemImage: "house") { WelcomeView() }
                 Tab("Accounts", systemImage: "person") { AccountView() }
+                Tab("Downloads", systemImage: "arrow.down.circle") { DownloadView() }
+                    .badge(dvm.runningTaskCount)
                 Tab(role: .search) {
                     SearchView()
                 }
-                Tab("Downloads", systemImage: "arrow.down.circle") { DownloadView() }
-                    .badge(dvm.runningTaskCount)
                 Tab("Settings", systemImage: "gear") { SettingView() }
             }
             .neverMinimizeTab()
             .activateSearchWhenSearchTabSelected()
             .sidebarAdaptableTabView()
+            .sheet(item: $decryptor.sharePackage) { item in
+                AssppActivityShare(items: [item.url])
+            }
         }
     }
 #endif
