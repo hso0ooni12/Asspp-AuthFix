@@ -32,7 +32,14 @@ CONFIG
 extra_xcodebuild_flags=()
 if [[ -n "${R3_KBSYNC_ARCHIVE:-}" ]]; then
   [[ -s "${R3_KBSYNC_ARCHIVE}" ]] || { echo "Missing KBSync archive"; exit 1; }
-  extra_xcodebuild_flags=(OTHER_LDFLAGS="-force_load ${R3_KBSYNC_ARCHIVE}")
+  native_link_flags="-force_load ${R3_KBSYNC_ARCHIVE}"
+  if [[ -n "${R5_UNICORN_ARCHIVE:-}" ]]; then
+    [[ -s "${R5_UNICORN_ARCHIVE}" ]] || { echo "Missing iOS Unicorn archive"; exit 1; }
+    # purego uses dlsym(RTLD_DEFAULT, "uc_version") on iOS. Force-load the
+    # patched static library and export its public API from the app binary.
+    native_link_flags+=" -force_load ${R5_UNICORN_ARCHIVE} -Wl,-export_dynamic"
+  fi
+  extra_xcodebuild_flags=(OTHER_LDFLAGS="${native_link_flags}")
 fi
 
 xcodebuild -workspace Asspp.xcworkspace -scheme Asspp -configuration Release \
@@ -40,7 +47,7 @@ xcodebuild -workspace Asspp.xcworkspace -scheme Asspp -configuration Release \
   -derivedDataPath .build-authfix/DerivedData \
   -clonedSourcePackagesDirPath .build-authfix/SourcePackages \
   DEVELOPMENT_TEAM= CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
-  CODE_SIGN_ENTITLEMENTS= MARKETING_VERSION=4.2.5 CURRENT_PROJECT_VERSION=2026110703 \
+  CODE_SIGN_ENTITLEMENTS= MARKETING_VERSION=4.2.6 CURRENT_PROJECT_VERSION=2026110704 \
   PRODUCT_BUNDLE_IDENTIFIER=wiki.qaq.Asspp.AuthFix \
   INFOPLIST_KEY_CFBundleDisplayName='Asspp AuthFix' \
   "${extra_xcodebuild_flags[@]}" build 2>&1 | tee artifacts/build.log | xcbeautify
@@ -53,7 +60,7 @@ app = root / '.build-authfix/DerivedData/Build/Products/Release-iphoneos/Asspp.a
 if not app.is_dir():
     raise SystemExit('Expected iPhoneOS app was not built')
 info = plistlib.loads((app / 'Info.plist').read_bytes())
-expected = {'CFBundleShortVersionString': '4.2.5', 'CFBundleVersion': '2026110703', 'CFBundleIdentifier': 'wiki.qaq.Asspp.AuthFix'}
+expected = {'CFBundleShortVersionString': '4.2.6', 'CFBundleVersion': '2026110704', 'CFBundleIdentifier': 'wiki.qaq.Asspp.AuthFix'}
 for key, value in expected.items():
     if info.get(key) != value:
         raise SystemExit(f'Incorrect build metadata: {key}')
