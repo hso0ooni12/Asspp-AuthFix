@@ -1,5 +1,5 @@
 diff --git a/FairPlayed/FairPlayed/main.m b/FairPlayed/FairPlayed/main.m
-index 0c7a7df..488344d 100644
+index 0c7a7df..5a68b0e 100644
 --- a/FairPlayed/FairPlayed/main.m
 +++ b/FairPlayed/FairPlayed/main.m
 @@ -40,7 +40,7 @@ static NSString *WorkDir(void) {
@@ -23,7 +23,37 @@ index 0c7a7df..488344d 100644
      for (NSString *name in [fm contentsOfDirectoryAtPath:root error:nil]) @autoreleasepool {
          NSString *src = [root stringByAppendingPathComponent:name];
          NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[src stringByAppendingPathComponent:@"Info.plist"]];
-@@ -434,15 +435,26 @@ static NSString *WorkDir(void) {
+@@ -426,23 +427,56 @@ static NSString *WorkDir(void) {
+         FPLog(@"copied bundle; skipped %lu item(s): %@", (unsigned long)skipped.count, [skipped componentsJoinedByString:@", "]);
+         int dec = 0, plain = 0, fail = 0;
+         NSMutableArray *failed = [NSMutableArray array];
+-        for (NSString *rel in [self machOsUnder:src]) @autoreleasepool {
++        NSArray<NSString *> *binaries = [self machOsUnder:src];
++        int processed = 0;
++        FPLog(@"FP_PROGRESS 0 %lu", (unsigned long)binaries.count);
++        for (NSString *rel in binaries) @autoreleasepool {
+             int r = fp_decrypt_file([src stringByAppendingPathComponent:rel].fileSystemRepresentation,
+                                     [appDst stringByAppendingPathComponent:rel].fileSystemRepresentation, core_log, NULL);
++            if (r >= 0) {
++                // A successful syscall is insufficient: check that the exported
++                // Mach-O header reports no remaining encrypted slices.
++                NSString *dstPath = [appDst stringByAppendingPathComponent:rel];
++                fp_slice_t slices[FP_MAX_SLICES]; int count = 0; char parseErr[256] = {0};
++                if (fp_parse(dstPath.fileSystemRepresentation, slices, FP_MAX_SLICES,
++                             &count, parseErr, sizeof parseErr) != 0 || count == 0) {
++                    FPLog(@"  [VERIFY FAILED] %@: %s", rel, parseErr);
++                    r = -1;
++                } else for (int j = 0; j < count; j++) {
++                    if (slices[j].has_enc && slices[j].cryptid != 0) {
++                        FPLog(@"  [VERIFY FAILED] %@: slice %d still has cryptid=%u", rel, j, slices[j].cryptid);
++                        r = -1;
++                    }
++                }
++            }
+             if (r == 0) dec++; else if (r == 1) plain++; else { fail++; [failed addObject:rel]; }
+             FPLog(@"  %@ %@", r == 0 ? @"[DECRYPTED]" : r == 1 ? @"[plain]    " : @"[FAILED]   ", rel);
++            processed++;
++            FPLog(@"FP_PROGRESS %d %lu", processed, (unsigned long)binaries.count);
          }
          NSString *outDir = [DocsDir() stringByAppendingPathComponent:@"Decrypted"];
          [fm createDirectoryAtPath:outDir withIntermediateDirectories:YES attributes:nil error:nil];
@@ -40,6 +70,7 @@ index 0c7a7df..488344d 100644
 +            continue;
 +        }
 +        NSString *ipa = [outDir stringByAppendingPathComponent:[name stringByAppendingString:@"-decrypted.ipa"]];
++        [fm removeItemAtPath:ipa error:nil];
          char zerr[512] = {0};
          int zr = zip_create_from_dir(work.fileSystemRepresentation, ipa.fileSystemRepresentation, zerr, sizeof zerr);
          [fm removeItemAtPath:work error:nil];
@@ -52,16 +83,156 @@ index 0c7a7df..488344d 100644
  }
  
  + (void)processAllDocumentsIPAs {
-@@ -479,6 +491,8 @@ static NSString *WorkDir(void) {
+@@ -479,28 +513,121 @@ static NSString *WorkDir(void) {
  @interface FPViewController : UIViewController <UIDocumentPickerDelegate>
  @property (nonatomic, strong) UITextView *textView;
  @property (nonatomic, strong) NSString *lastIPA;
 +@property (nonatomic, assign) BOOL autoExportStarted;
 +@property (nonatomic, assign) BOOL isExporting;
++@property (nonatomic, assign) BOOL embeddedMode;
++@property (nonatomic, strong) UILabel *statusLabel;
++@property (nonatomic, strong) UIProgressView *progressView;
++@property (nonatomic, strong) UIButton *shareButton;
  @end
  
  @implementation FPViewController
-@@ -521,6 +535,60 @@ static NSString *WorkDir(void) {
+ 
+ - (void)viewDidLoad {
+     [super viewDidLoad];
+-    self.view.backgroundColor = UIColor.systemBackgroundColor;
+-    UIStackView *buttons = [[UIStackView alloc] init];
+-    buttons.axis = UILayoutConstraintAxisHorizontal; buttons.distribution = UIStackViewDistributionFillEqually; buttons.spacing = 8;
+-    NSArray *titles = @[@"Pick IPA", @"Docs IPAs", @"Export", @"Share"];
+-    for (NSUInteger i = 0; i < titles.count; i++) {
+-        UIButton *b = [UIButton buttonWithConfiguration:UIButtonConfiguration.tintedButtonConfiguration primaryAction:nil];
+-        [b setTitle:titles[i] forState:UIControlStateNormal];
+-        b.tag = (NSInteger)i;
+-        [b addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];
+-        [buttons addArrangedSubview:b];
++    NSString *embeddedRoot = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"EmbeddedPayload"];
++    for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:embeddedRoot error:nil]) {
++        if ([NSFileManager.defaultManager fileExistsAtPath:[[embeddedRoot stringByAppendingPathComponent:name] stringByAppendingPathComponent:@"Info.plist"]]) {
++            self.embeddedMode = YES;
++            break;
++        }
+     }
+     self.textView = [[UITextView alloc] init];
+     self.textView.editable = NO;
+-    self.textView.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
+-    UIStackView *root = [[UIStackView alloc] initWithArrangedSubviews:@[buttons, self.textView]];
+-    root.axis = UILayoutConstraintAxisVertical; root.spacing = 8;
++    self.textView.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
++    UIStackView *root = [[UIStackView alloc] init];
++    root.axis = UILayoutConstraintAxisVertical;
++    root.spacing = 12;
++    if (self.embeddedMode) {
++        self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.055 blue:0.13 alpha:1];
++        UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"FairPlayedIcon"]];
++        icon.contentMode = UIViewContentModeScaleAspectFit;
++        icon.layer.cornerRadius = 20;
++        icon.clipsToBounds = YES;
++        UIView *iconHolder = [[UIView alloc] init];
++        icon.translatesAutoresizingMaskIntoConstraints = NO;
++        [iconHolder.heightAnchor constraintEqualToConstant:100].active = YES;
++        [iconHolder addSubview:icon];
++        [NSLayoutConstraint activateConstraints:@[
++            [icon.widthAnchor constraintEqualToConstant:92],
++            [icon.heightAnchor constraintEqualToConstant:92],
++            [icon.centerXAnchor constraintEqualToAnchor:iconHolder.centerXAnchor],
++            [icon.centerYAnchor constraintEqualToAnchor:iconHolder.centerYAnchor],
++        ]];
++        [root addArrangedSubview:iconHolder];
++
++        UILabel *title = [[UILabel alloc] init];
++        title.text = @"FairPlayed";
++        title.textAlignment = NSTextAlignmentCenter;
++        title.font = [UIFont systemFontOfSize:30 weight:UIFontWeightBold];
++        title.textColor = UIColor.whiteColor;
++        [root addArrangedSubview:title];
++
++        UILabel *subtitle = [[UILabel alloc] init];
++        subtitle.text = @"Automatic IPA Decryption";
++        subtitle.textAlignment = NSTextAlignmentCenter;
++        subtitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
++        subtitle.textColor = [UIColor colorWithWhite:0.72 alpha:1];
++        [root addArrangedSubview:subtitle];
++
++        self.statusLabel = [[UILabel alloc] init];
++        self.statusLabel.text = @"Preparing to decrypt...";
++        self.statusLabel.textAlignment = NSTextAlignmentCenter;
++        self.statusLabel.numberOfLines = 2;
++        self.statusLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
++        self.statusLabel.textColor = UIColor.whiteColor;
++        [root addArrangedSubview:self.statusLabel];
++
++        self.progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
++        self.progressView.progress = 0;
++        self.progressView.progressTintColor = [UIColor colorWithRed:0.28 green:0.8 blue:1 alpha:1];
++        self.progressView.trackTintColor = [UIColor colorWithWhite:0.25 alpha:1];
++        [root addArrangedSubview:self.progressView];
++
++        self.shareButton = [UIButton buttonWithConfiguration:UIButtonConfiguration.filledButtonConfiguration primaryAction:nil];
++        [self.shareButton setTitle:@"Share Decrypted IPA" forState:UIControlStateNormal];
++        [self.shareButton addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];
++        self.shareButton.tag = 3;
++        self.shareButton.enabled = NO;
++        [root addArrangedSubview:self.shareButton];
++
++        UIButton *retry = [UIButton buttonWithConfiguration:UIButtonConfiguration.tintedButtonConfiguration primaryAction:nil];
++        [retry setTitle:@"Retry Export" forState:UIControlStateNormal];
++        retry.tag = 2;
++        [retry addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];
++        [root addArrangedSubview:retry];
++
++        UIButton *details = [UIButton buttonWithConfiguration:UIButtonConfiguration.plainButtonConfiguration primaryAction:nil];
++        [details setTitle:@"Advanced Details" forState:UIControlStateNormal];
++        details.tag = 4;
++        [details addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];
++        [root addArrangedSubview:details];
++
++        self.textView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1];
++        self.textView.textColor = UIColor.whiteColor;
++        self.textView.layer.cornerRadius = 12;
++        self.textView.hidden = YES;
++        [self.textView.heightAnchor constraintEqualToConstant:250].active = YES;
++        [root addArrangedSubview:self.textView];
++        UIView *filler = [[UIView alloc] init];
++        [root addArrangedSubview:filler];
++    } else {
++        self.view.backgroundColor = UIColor.systemBackgroundColor;
++        UIStackView *buttons = [[UIStackView alloc] init];
++        buttons.axis = UILayoutConstraintAxisHorizontal;
++        buttons.distribution = UIStackViewDistributionFillEqually;
++        buttons.spacing = 8;
++        NSArray *titles = @[@"Pick IPA", @"Docs IPAs", @"Export", @"Share"];
++        for (NSUInteger i = 0; i < titles.count; i++) {
++            UIButton *b = [UIButton buttonWithConfiguration:UIButtonConfiguration.tintedButtonConfiguration primaryAction:nil];
++            [b setTitle:titles[i] forState:UIControlStateNormal];
++            b.tag = (NSInteger)i;
++            [b addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];
++            [buttons addArrangedSubview:b];
++        }
++        [root addArrangedSubview:buttons];
++        [root addArrangedSubview:self.textView];
++    }
+     root.translatesAutoresizingMaskIntoConstraints = NO;
+     [self.view addSubview:root];
+     UILayoutGuide *g = self.view.safeAreaLayoutGuide;
+@@ -515,12 +642,81 @@ static NSString *WorkDir(void) {
+         dispatch_async(dispatch_get_main_queue(), ^{
+             UITextView *tv = ws.textView;
+             tv.text = [tv.text stringByAppendingFormat:@"%@\n", s];
+-            [tv scrollRangeToVisible:NSMakeRange(tv.text.length, 0)];
++            if (!tv.hidden) [tv scrollRangeToVisible:NSMakeRange(tv.text.length, 0)];
++            if ([s hasPrefix:@"FP_PROGRESS "] && ws.progressView) {
++                int current = 0, total = 0;
++                if (sscanf(s.UTF8String, "FP_PROGRESS %d %d", &current, &total) == 2 && total > 0) {
++                    ws.progressView.progress = (float)current / (float)total;
++                    ws.statusLabel.text = [NSString stringWithFormat:@"Decrypting %d of %d components", current, total];
++                }
++            }
+         });
+     };
      dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [FPRunner runEnvironment]; });
  }
  
@@ -81,6 +252,9 @@ index 0c7a7df..488344d 100644
 +- (void)exportEmbeddedAndShare {
 +    if (self.isExporting) return;
 +    self.isExporting = YES;
++    self.shareButton.enabled = NO;
++    self.progressView.progress = 0;
++    self.statusLabel.text = @"Starting decryption...";
 +    FPLog(@"=== Auto export started; waiting for a fully decrypted IPA ===");
 +    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 +        [FPRunner logEnvironment];
@@ -89,12 +263,17 @@ index 0c7a7df..488344d 100644
 +            self.isExporting = NO;
 +            if (ipa.length && [NSFileManager.defaultManager fileExistsAtPath:ipa]) {
 +                self.lastIPA = ipa;
++                self.progressView.progress = 1;
++                self.statusLabel.text = @"Decryption complete ✓";
++                self.shareButton.enabled = YES;
 +                FPLog(@"=== Decryption complete; opening share sheet for %@ ===", ipa.lastPathComponent);
 +                [self shareDecryptedIPAFrom:nil];
 +            } else {
++                self.statusLabel.text = @"Decryption incomplete — review details";
++                self.textView.hidden = NO;
 +                FPLog(@"=== No complete decrypted IPA to share ===");
 +                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Decryption incomplete"
-+                   message:@"At least one encrypted binary could not be decrypted. No PARTIAL IPA was exported. Review the log and tap Export to retry."
++                   message:@"At least one encrypted binary could not be decrypted or verified. No PARTIAL IPA was exported. Review Advanced Details and tap Retry Export."
 +                   preferredStyle:UIAlertControllerStyleAlert];
 +                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
 +                [self presentViewController:alert animated:YES completion:nil];
@@ -122,7 +301,7 @@ index 0c7a7df..488344d 100644
  - (void)tap:(UIButton *)b {
      switch (b.tag) {
          case 0: {
-@@ -532,18 +600,8 @@ static NSString *WorkDir(void) {
+@@ -532,18 +728,9 @@ static NSString *WorkDir(void) {
              break;
          }
          case 1: [self background:^{ [FPRunner processAllDocumentsIPAs]; }]; break;
@@ -140,6 +319,7 @@ index 0c7a7df..488344d 100644
 -        }
 +        case 2: [self exportEmbeddedAndShare]; break;
 +        case 3: [self shareDecryptedIPAFrom:b]; break;
++        case 4: self.textView.hidden = !self.textView.hidden; break;
      }
  }
  
