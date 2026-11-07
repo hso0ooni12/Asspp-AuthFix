@@ -1,8 +1,6 @@
-// This source is copied into github.com/majd/ipatool/v2/cmd/r3bridge
-// before compilation so it may use ipatool's internal SAP packages.
-//
-// R3 experimental bridge only. No Apple credentials are handled here;
-// the host iOS app must already have a valid account session.
+// Experimental native bridge to ipatool's pinned KBSync implementation.
+// Only fixed stage codes cross this boundary on failure. Never return raw
+// errors, Apple credentials, device IDs or signed download URLs.
 package main
 
 /*
@@ -15,7 +13,10 @@ import (
     "context"
     "encoding/base64"
     "encoding/hex"
+    "errors"
+    "strconv"
     "strings"
+    "sync"
     "time"
     "unsafe"
 
@@ -23,26 +24,64 @@ import (
     "github.com/majd/ipatool/v2/internal/sap/machine"
 )
 
+// Cache successful account-bound blobs in memory for this process only.
+// Never persist them in the app's Documents folder or CI artifacts.
+var kbsyncCache = struct {
+    sync.Mutex
+    blobs map[string]string
+}{blobs: make(map[string]string)}
+
 //export R3GenerateKBSync
 func R3GenerateKBSync(guid *C.char, accountDSID C.ulonglong) *C.char {
     if guid == nil || accountDSID == 0 {
-        return C.CString("")
+        return C.CString("!R3:input")
     }
-    hardwareID, err := hex.DecodeString(strings.TrimSpace(C.GoString(guid)))
+    hexGUID := strings.TrimSpace(C.GoString(guid))
+    hardwareID, err := hex.DecodeString(hexGUID)
     if err != nil || len(hardwareID) != 6 {
-        return C.CString("")
+        return C.CString("!R3:input")
     }
+    cacheKey := strings.ToUpper(hexGUID) + ":" + strconv.FormatUint(uint64(accountDSID), 10)
+    kbsyncCache.Lock()
+    cached := kbsyncCache.blobs[cacheKey]
+    kbsyncCache.Unlock()
+    if cached != "" {
+        return C.CString(cached)
+    }
+
     ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
     defer cancel()
+
     bundle, err := assets.Load(ctx)
     if err != nil {
-        return C.CString("")
+        if errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+            return C.CString("!R3:assets-timeout")
+        }
+        return C.CString("!R3:assets")
     }
+
     data, err := machine.GenerateKBSync(ctx, bundle, hardwareID, uint64(accountDSID))
-    if err != nil || len(data) == 0 {
-        return C.CString("")
+    if err != nil {
+        failure := strings.ToLower(err.Error())
+        switch {
+        case errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
+            return C.CString("!R3:guest-timeout")
+        case strings.Contains(failure, "timed out"):
+            return C.CString("!R3:guest-timeout")
+        case strings.Contains(failure, "storeagent"):
+            return C.CString("!R3:storeagent")
+        default:
+            return C.CString("!R3:guest")
+        }
     }
-    return C.CString(base64.StdEncoding.EncodeToString(data))
+    if len(data) == 0 {
+        return C.CString("!R3:empty")
+    }
+    blob := base64.StdEncoding.EncodeToString(data)
+    kbsyncCache.Lock()
+    kbsyncCache.blobs[cacheKey] = blob
+    kbsyncCache.Unlock()
+    return C.CString(blob)
 }
 
 //export R3FreeKBSyncString
