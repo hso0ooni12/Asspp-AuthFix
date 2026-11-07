@@ -91,6 +91,9 @@ struct AccountDetailView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(AssppTheme.background)
+        .tint(AssppTheme.accent)
         .navigationTitle("Account Details")
     }
 }

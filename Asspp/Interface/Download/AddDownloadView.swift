@@ -30,6 +30,15 @@ struct AddDownloadView: View {
     var body: some View {
         Form {
             Section {
+                AssppScreenHeader(
+                    eyebrow: "DIRECT DOWNLOAD",
+                    title: "Add package",
+                    subtitle: "Enter the bundle ID to locate the IPA using your Apple Account.",
+                    symbol: "plus.app"
+                )
+            }
+            .listRowBackground(Color.clear)
+            Section {
                 TextField("Bundle ID", text: $bundleID)
                 #if os(iOS)
                     .autocorrectionDisabled()
@@ -97,6 +106,9 @@ struct AddDownloadView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(AssppTheme.background)
+        .tint(AssppTheme.accent)
         .navigationTitle("Direct Download")
     }
 }

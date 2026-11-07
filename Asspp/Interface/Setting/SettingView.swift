@@ -58,15 +58,16 @@ struct SettingView: View {
     private var formContent: some View {
         Form {
             Section {
-                Toggle("Demo Mode", isOn: $vm.demoMode)
-                Button("Delete All Downloads", role: .destructive) {
-                    Downloads.this.removeAll()
-                }
-            } header: {
-                Text("General")
-            } footer: {
-                Text("Demo mode redacts all accounts and sensitive information.")
+                AssppScreenHeader(
+                    eyebrow: "ASS•PP  /  CONTROL CENTER",
+                    title: "Settings",
+                    subtitle: "Manage your signing identity, decryption workflow and privacy.",
+                    symbol: "slider.horizontal.3"
+                )
+                .padding(.vertical, 6)
             }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 4, trailing: 20))
 
             #if os(iOS)
                 Section {
@@ -103,10 +104,12 @@ struct SettingView: View {
                         showSigningMessage = true
                     }
                     HStack {
-                        Image(systemName: signer.isConfigured ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .foregroundStyle(signer.isConfigured ? Color.green : Color.orange)
-                        Text(signer.isConfigured ? "Auto Sign Ready" : "Complete the 3 fields to enable Auto Sign")
-                            .font(.footnote)
+                        Label(
+                            signer.isConfigured ? "Auto Sign Ready" : "Import both files and save the P12 password",
+                            systemImage: signer.isConfigured ? "checkmark.shield.fill" : "exclamationmark.shield"
+                        )
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(signer.isConfigured ? AssppTheme.accent : .orange)
                     }
                     if signer.hasCertificate || signer.hasProfile || signer.hasPassword {
                         Button("Remove Signing Identity", role: .destructive) {
@@ -114,32 +117,11 @@ struct SettingView: View {
                         }
                     }
                 } header: {
-                    Text("On-device IPA Signing")
+                    Label("ON-DEVICE SIGNING", systemImage: "checkmark.shield.fill")
                 } footer: {
                     Text("Your Apple Account remains for App Store downloads. The P12 certificate, profile, and password are stored in this device's Keychain, never uploaded to a server. Once configured, Decrypt also signs FairPlayed automatically. Your profile must support this device and the helper bundle ID.")
                 }
-                .fileImporter(isPresented: $importingIdentity, allowedContentTypes: [.item]) { result in
-                    do {
-                        let url = try result.get()
-                        try signer.importFile(url, as: importingItem)
-                        signingMessage = "Signing file imported."
-                    } catch {
-                        signingMessage = error.localizedDescription
-                    }
-                    showSigningMessage = true
-                }
-                .alert("Signing Identity", isPresented: $showSigningMessage) {
-                    Button("OK", role: .cancel) {}
-                } message: {
-                    Text(signingMessage)
-                }
-                .confirmationDialog("Remove locally stored signing credentials?", isPresented: $showRemoveSignerConfirmation) {
-                    Button("Remove Signing Identity", role: .destructive) {
-                        signer.clear()
-                    }
-                } message: {
-                    Text("The existing signed IPA files will not be removed.")
-                }
+                .listRowBackground(AssppTheme.surface)
 
                 Section {
                     Toggle(isOn: $autoPrepareDecrypt) {
@@ -154,10 +136,11 @@ struct SettingView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } header: {
-                    Text("IPA Decryption")
+                    Label("DECRYPTION", systemImage: "lock.open.fill")
                 } footer: {
                     Text("When a download finishes, Asspp can prepare its FairPlayed helper and sign it automatically when an identity is configured. Tap Install Signed FairPlayed from the download to begin installation. If signing is unavailable, an unsigned helper is shared instead.")
                 }
+                .listRowBackground(AssppTheme.surface)
                 .confirmationDialog("Remove all prepared FairPlayed helpers?", isPresented: $showClearPreparedConfirmation) {
                     Button("Clear Prepared Helpers", role: .destructive) {
                         decryptor.clearPreparedHelpers()
@@ -166,6 +149,18 @@ struct SettingView: View {
                     Text("Downloaded original IPAs and saved signing credentials are kept. Generated FairPlayed IPA files (prepared and signed) are removed.")
                 }
             #endif
+
+            Section {
+                Toggle("Demo Mode", isOn: $vm.demoMode)
+                Button("Delete All Downloads", role: .destructive) {
+                    Downloads.this.removeAll()
+                }
+            } header: {
+                Text("GENERAL")
+            } footer: {
+                Text("Demo mode redacts account details. Deleting downloads leaves signed certificates untouched.")
+            }
+            .listRowBackground(AssppTheme.surface)
 
             Section {
                 Text(ProcessInfo.processInfo.hostName)
@@ -236,7 +231,7 @@ struct SettingView: View {
                     #endif
                 }
             } header: {
-                Text("Device")
+                Text("DEVICE & INSTALLATION")
             } footer: {
                 #if canImport(UIKit)
                     Text("Grant local network permission to install apps. Install and trust the SSL certificate for on-device installation.")
@@ -244,6 +239,7 @@ struct SettingView: View {
                     Text("Grant local network permission to install apps. Install the SSL certificate through System Keychain.")
                 #endif
             }
+            .listRowBackground(AssppTheme.surface)
             .alert("Edit Device GUID", isPresented: $showDeviceIdWarning) {
                 Button("Edit", role: .destructive) {
                     deviceIdDraft = vm.deviceIdentifier
@@ -259,13 +255,50 @@ struct SettingView: View {
                     showResetConfirmation = true
                 }
             } header: {
-                Text("Danger Zone")
+                Text("RESET")
             } footer: {
                 Text("This will reset all your settings.")
             }
+            .listRowBackground(AssppTheme.surface)
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(AssppTheme.background)
+        .tint(AssppTheme.accent)
         .navigationTitle("Settings")
+        #if os(iOS)
+        .sheet(isPresented: $importingIdentity) {
+            // UIKit's import-as-copy picker accepts security files from Files
+            // providers which the generic SwiftUI `.item` importer greyed out.
+            SigningDocumentPicker(item: importingItem) { result in
+                importingIdentity = false
+                switch result {
+                case let .success(url):
+                    do {
+                        try signer.importFile(url, as: importingItem)
+                        signingMessage = "Signing file imported successfully."
+                    } catch {
+                        signingMessage = error.localizedDescription
+                    }
+                case let .failure(error):
+                    signingMessage = error.localizedDescription
+                }
+                showSigningMessage = true
+            }
+        }
+        .alert("Signing Identity", isPresented: $showSigningMessage) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(signingMessage)
+        }
+        .confirmationDialog("Remove locally stored signing credentials?", isPresented: $showRemoveSignerConfirmation) {
+            Button("Remove Signing Identity", role: .destructive) {
+                signer.clear()
+            }
+        } message: {
+            Text("The existing signed IPA files will not be removed.")
+        }
+        #endif
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 NavigationLink {
@@ -296,3 +329,37 @@ struct SettingView: View {
         }
     }
 }
+
+#if os(iOS)
+private struct SigningDocumentPicker: UIViewControllerRepresentable {
+    let item: SigningCenter.Item
+    let onPicked: (Result<URL, Error>) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPicked: onPicked) }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let extensions = item == .certificate ? ["p12", "pfx"] : ["mobileprovision", "provisionprofile"]
+        var types: [UTType] = extensions.compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
+        // These common base types let Files providers expose certificates even
+        // when their proprietary UTType is not declared on that provider.
+        types.append(contentsOf: [.data, .content, .item])
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPicked: (Result<URL, Error>) -> Void
+        init(onPicked: @escaping (Result<URL, Error>) -> Void) {
+            self.onPicked = onPicked
+        }
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let url = urls.first else { return }
+            onPicked(.success(url))
+        }
+    }
+}
+#endif

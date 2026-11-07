@@ -16,7 +16,11 @@ struct MainView: View {
         #if os(macOS)
             MacSidebarMainView()
         #else
-            LegacyTabMainView()
+            if #available(iOS 26.0, *) {
+                NewMainView()
+            } else {
+                LegacyTabMainView()
+            }
         #endif
     }
 }
@@ -197,6 +201,8 @@ struct MainView: View {
             .sheet(item: $decryptor.installer) { installer in
                 InstallerView(installer: installer)
             }
+            .tint(AssppTheme.accent)
+            .preferredColorScheme(.dark)
         }
     }
 
@@ -221,6 +227,85 @@ struct MainView: View {
             .sheet(item: $decryptor.installer) { installer in
                 InstallerView(installer: installer)
             }
+            .tint(AssppTheme.accent)
+            .preferredColorScheme(.dark)
         }
     }
 #endif
+
+// One visual language shared by the four primary screens and the detail flows.
+// Colors intentionally keep readable contrast behind the native iOS 26 glass UI.
+enum AssppTheme {
+    static let accent = Color(red: 0.34, green: 0.87, blue: 0.98)
+    static let violet = Color(red: 0.51, green: 0.46, blue: 0.98)
+    static let canvas = Color(red: 0.035, green: 0.055, blue: 0.115)
+    static let surface = Color(red: 0.085, green: 0.115, blue: 0.19)
+    static let elevated = Color(red: 0.12, green: 0.16, blue: 0.25)
+    static let separator = Color.white.opacity(0.095)
+
+    static var background: some View {
+        ZStack {
+            canvas
+            RadialGradient(
+                colors: [violet.opacity(0.23), accent.opacity(0.045), .clear],
+                center: .topTrailing,
+                startRadius: 10,
+                endRadius: 620
+            )
+        }
+        .ignoresSafeArea()
+    }
+}
+
+struct AssppScreenHeader: View {
+    let eyebrow: String
+    let title: String
+    let subtitle: String
+    let symbol: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text(eyebrow.uppercased())
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .tracking(2.4)
+                    .foregroundStyle(AssppTheme.accent)
+                Text(title)
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .tracking(-1.2)
+                    .foregroundStyle(.white)
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.61))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            Image(systemName: symbol)
+                .font(.system(size: 25, weight: .medium))
+                .foregroundStyle(AssppTheme.accent)
+                .frame(width: 58, height: 58)
+                .background(AssppTheme.accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 18))
+                .overlay(RoundedRectangle(cornerRadius: 18).stroke(AssppTheme.accent.opacity(0.24)))
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+struct AssppCard<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AssppTheme.surface, in: RoundedRectangle(cornerRadius: 23, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 23, style: .continuous)
+                    .stroke(AssppTheme.separator, lineWidth: 1)
+            }
+    }
+}

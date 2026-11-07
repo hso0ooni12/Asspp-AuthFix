@@ -55,6 +55,15 @@ struct ProductView: View {
 
     var body: some View {
         Form {
+            Section {
+                AssppScreenHeader(
+                    eyebrow: "APP STORE  /  PACKAGE",
+                    title: "Get this app",
+                    subtitle: "Choose an account and save the package to your downloads.",
+                    symbol: "square.and.arrow.down"
+                )
+            }
+            .listRowBackground(Color.clear)
             accountSelector
             buttons
             packageHeader
@@ -73,6 +82,9 @@ struct ProductView: View {
             pricing
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(AssppTheme.background)
+        .tint(AssppTheme.accent)
         .onAppear {
             selection = eligibleAccounts.first?.id ?? .init()
         }

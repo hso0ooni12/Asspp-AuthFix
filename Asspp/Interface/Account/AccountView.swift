@@ -121,45 +121,114 @@ struct AccountView: View {
     #if !os(macOS)
         private var iOSBody: some View {
             NavigationStack(path: $navigationPath) {
-                Group {
-                    if vm.accounts.isEmpty {
-                        ContentUnavailableView(
-                            label: {
-                                Label("No Accounts", systemImage: "person.crop.circle.badge.questionmark")
-                            },
-                            description: {
-                                Text("Add an Apple ID to start downloading IPA packages.")
-                            },
-                            actions: {
-                                Button("Add Account") { addAccount.toggle() }
-                            },
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        AssppScreenHeader(
+                            eyebrow: "ASS•PP  /  YOUR LIBRARY",
+                            title: "Accounts",
+                            subtitle: "Connect your App Store account to discover and download your apps.",
+                            symbol: "person.crop.circle.badge.checkmark"
                         )
-                    } else {
-                        Form {
-                            Section {
-                                ForEach(vm.accounts) { account in
-                                    NavigationLink(value: account.id) {
-                                        HStack {
-                                            Text(account.account.email)
-                                                .redacted(reason: .placeholder, isEnabled: vm.demoMode)
-                                            Spacer()
-                                        }
-                                        .badge(ApplePackage.Configuration.countryCode(for: account.account.store) ?? account.account.store)
-                                    }
+
+                        AssppCard {
+                            HStack(spacing: 13) {
+                                Image(systemName: "lock.shield.fill")
+                                    .font(.title2)
+                                    .foregroundStyle(AssppTheme.accent)
+                                    .frame(width: 48, height: 48)
+                                    .background(AssppTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 15))
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Private by design")
+                                        .font(.headline)
+                                    Text("Your account credentials stay on your device.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
-                            } header: {
-                                Text("Apple IDs")
-                            } footer: {
-                                Text("Your accounts are saved in your Keychain and will be synced across devices with the same iCloud account signed in.")
+                                Spacer(minLength: 0)
                             }
                         }
-                        .formStyle(.grouped)
+
+                        HStack {
+                            Text("CONNECTED ACCOUNTS")
+                                .font(.caption.bold())
+                                .tracking(1.5)
+                                .foregroundStyle(.white.opacity(0.58))
+                            Spacer()
+                            Text("\(vm.accounts.count)")
+                                .font(.caption.bold().monospacedDigit())
+                                .foregroundStyle(AssppTheme.accent)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(AssppTheme.accent.opacity(0.11), in: Capsule())
+                        }
+
+                        if vm.accounts.isEmpty {
+                            AssppCard {
+                                VStack(alignment: .leading, spacing: 17) {
+                                    Image(systemName: "person.crop.circle.badge.plus")
+                                        .font(.system(size: 36, weight: .light))
+                                        .foregroundStyle(AssppTheme.accent)
+                                    Text("Start with your Apple Account")
+                                        .font(.title3.bold())
+                                    Text("Add an account once to download the IPA files already available to you in the App Store.")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                    Button { addAccount = true } label: {
+                                        Label("Add Apple Account", systemImage: "plus.circle.fill")
+                                            .font(.headline)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 13)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(AssppTheme.accent)
+                                }
+                            }
+                        } else {
+                            ForEach(vm.accounts) { account in
+                                NavigationLink(value: account.id) {
+                                    AssppCard {
+                                        HStack(spacing: 13) {
+                                            Image(systemName: "person.crop.circle.fill")
+                                                .font(.system(size: 30))
+                                                .foregroundStyle(AssppTheme.accent)
+                                            VStack(alignment: .leading, spacing: 5) {
+                                                Text(account.account.email)
+                                                    .font(.subheadline.weight(.semibold))
+                                                    .lineLimit(1)
+                                                    .foregroundStyle(.white)
+                                                    .redacted(reason: .placeholder, isEnabled: vm.demoMode)
+                                                Text("Storefront · \(ApplePackage.Configuration.countryCode(for: account.account.store) ?? account.account.store)")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Spacer(minLength: 2)
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption.bold())
+                                                .foregroundStyle(.white.opacity(0.4))
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            Button { addAccount = true } label: {
+                                Label("Add another account", systemImage: "plus.circle.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                            }
+                            .buttonStyle(.bordered)
+                        }
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
+                    .padding(.bottom, 36)
                 }
+                .background(AssppTheme.background)
                 .navigationDestination(for: AppStore.UserAccount.ID.self) { id in
                     AccountDetailView(accountId: id)
                 }
                 .navigationTitle("Accounts")
+                .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem {
                         Button {

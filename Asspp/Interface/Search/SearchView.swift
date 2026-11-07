@@ -251,36 +251,130 @@ extension SearchView {
     @available(iOS 26.0, *)
     extension SearchView {
         var modernContent: some View {
-            content
-                .searchable(text: $searchKey, placement: searchablePlacement, prompt: "Keyword")
-                .onSubmit(of: .search) { search() }
-                .toolbarVisibility(navigationBarVisibility, for: .navigationBar)
-                .navigationTitle(Text("Search - \(searchRegion.uppercased())"))
-                .toolbar {
-                    if navigationBarVisibility != .hidden {
-                        tools
-                    }
-                }
-                .safeAreaBar(edge: .top) {
-                    if navigationBarVisibility == .hidden {
-                        HStack {
-                            Menu {
-                                searchTypePicker
-                            } label: {
-                                Label(searchType.rawValue, systemImage: searchType.iconName)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 19) {
+                    AssppScreenHeader(
+                        eyebrow: "ASS•PP  /  APP STORE",
+                        title: "Discover",
+                        subtitle: "Find the exact app and version you need.",
+                        symbol: "magnifyingglass"
+                    )
+
+                    AssppCard {
+                        VStack(alignment: .leading, spacing: 15) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "magnifyingglass")
+                                    .foregroundStyle(AssppTheme.accent)
+                                TextField("Search apps or Bundle ID", text: $searchKey)
+                                    .focused($searchKeyFocused)
+                                    .submitLabel(.search)
+                                    .onSubmit(search)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                if !searchKey.isEmpty {
+                                    Button {
+                                        searchKey = ""
+                                        searchResult = []
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
-                            .buttonStyle(.glass)
+                            .padding(13)
+                            .background(AssppTheme.elevated, in: RoundedRectangle(cornerRadius: 15))
 
-                            Spacer()
+                            HStack(spacing: 10) {
+                                Menu {
+                                    searchTypePicker
+                                } label: {
+                                    Label(searchType.rawValue, systemImage: searchType.iconName)
+                                }
+                                .buttonStyle(.bordered)
 
-                            searchRegionView()
-                                .buttonStyle(.glass)
+                                searchRegionView()
+                                    .buttonStyle(.bordered)
+
+                                Spacer(minLength: 0)
+
+                                Button(action: search) {
+                                    Label("Search", systemImage: "arrow.right")
+                                        .font(.subheadline.bold())
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(searchKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || searching)
+                            }
                         }
-                        .padding([.bottom, .horizontal])
+                    }
+
+                    if let searchError {
+                        Label(searchError, systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 6)
+                    }
+
+                    if searching {
+                        AssppCard {
+                            HStack(spacing: 12) {
+                                ProgressView().tint(AssppTheme.accent)
+                                Text("Searching the App Store...")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } else if searchResult.isEmpty {
+                        AssppCard {
+                            VStack(alignment: .leading, spacing: 9) {
+                                Image(systemName: "square.grid.2x2")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(AssppTheme.violet)
+                                Text("Everything starts with a search")
+                                    .font(.headline)
+                                Text("Choose your storefront, type an app name or Bundle ID, and start exploring.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } else {
+                        HStack {
+                            Text("SEARCH RESULTS")
+                                .font(.caption.bold())
+                                .tracking(1.5)
+                                .foregroundStyle(.white.opacity(0.6))
+                            Spacer()
+                            Text("\(searchResult.count) apps")
+                                .font(.caption)
+                                .foregroundStyle(AssppTheme.accent)
+                        }
+                        ForEach(searchResult) { item in
+                            NavigationLink(value: ProductDestination(archive: item, region: searchRegion)) {
+                                AssppCard {
+                                    ArchivePreviewView(archive: item)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
-                .animation(.spring, value: searchResult)
-                .animation(.spring, value: searching)
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 32)
+            }
+            .background(AssppTheme.background)
+            .navigationTitle("Search")
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: ProductDestination.self) { dest in
+                ProductView(archive: dest.archive, region: dest.region, navigationPath: $navigationPath)
+            }
+            .navigationDestination(for: PackageManifest.self) { manifest in
+                PackageView(pkg: manifest)
+            }
+            .onAppear { consumePendingFocus() }
+            .onChange(of: searchFocus.pending) { _, isPending in
+                if isPending { consumePendingFocus() }
+            }
         }
 
         var navigationBarVisibility: Visibility {

@@ -27,6 +27,15 @@ struct AddAccountView: View {
     var body: some View {
         Form {
             Section {
+                AssppScreenHeader(
+                    eyebrow: "SECURE CONNECTION",
+                    title: "Add account",
+                    subtitle: "Use your Apple Account only to retrieve App Store downloads.",
+                    symbol: "person.crop.circle.badge.plus"
+                )
+            }
+            .listRowBackground(Color.clear)
+            Section {
                 TextField("Email (Apple ID)", text: $email)
                 #if os(iOS)
                     .disableAutocorrection(true)
@@ -124,6 +133,9 @@ struct AddAccountView: View {
         }
         .disabled(isAuthenticating)
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(AssppTheme.background)
+        .tint(AssppTheme.accent)
         .animation(.spring, value: codeRequired)
         .onChange(of: email) { resetAuthentication() }
         .onChange(of: password) { resetAuthentication() }

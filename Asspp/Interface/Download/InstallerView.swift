@@ -56,10 +56,13 @@
                         UIApplication.shared.open(installer.iTunesLink)
                     }
                 } label: {
-                    VStack(spacing: 32) {
+                    VStack(spacing: 25) {
                         ForEach([icon], id: \.self) { icon in
                             Image(systemName: icon)
-                                .font(.system(.largeTitle, design: .rounded))
+                                .font(.system(size: 45, weight: .light))
+                                .foregroundStyle(AssppTheme.accent)
+                                .frame(width: 105, height: 105)
+                                .background(AssppTheme.surface, in: RoundedRectangle(cornerRadius: 30))
                                 .transition(.opacity.combined(with: .scale))
                         }
                         ForEach([text], id: \.self) { text in
@@ -83,6 +86,8 @@
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .padding(32)
             }
+            .background(AssppTheme.background)
+            .tint(AssppTheme.accent)
             .animation(.spring, value: text)
             .animation(.spring, value: icon)
             .onDisappear {

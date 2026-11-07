@@ -14,33 +14,59 @@ struct DownloadView: View {
         NavigationStack {
             content
                 .navigationTitle("Downloads")
+                .navigationBarTitleDisplayMode(.inline)
         }
     }
 
     private var content: some View {
-        Group {
-            if vm.manifests.isEmpty {
-                ContentUnavailableView(
-                    label: {
-                        Label("No Downloads", systemImage: "arrow.down.circle")
-                    },
-                    description: {
-                        Text("Search for an app or add a download link to get started.")
-                    },
-                    actions: {
-                        NavigationLink("Add Download") {
-                            AddDownloadView()
-                        }
-                    },
+        List {
+            VStack(alignment: .leading, spacing: 18) {
+                AssppScreenHeader(
+                    eyebrow: "ASS•PP  /  IPA MANAGER",
+                    title: "Downloads",
+                    subtitle: "Your apps, decryption and signing — together in one place.",
+                    symbol: "arrow.down.to.line.compact"
                 )
-                .padding()
-            } else {
-                Form {
-                    packageList
+                HStack(spacing: 12) {
+                    summaryMetric("\(vm.manifests.count)", label: "TOTAL", symbol: "square.stack.3d.up")
+                    summaryMetric("\(vm.manifests.filter(\.completed).count)", label: "READY", symbol: "checkmark.seal")
+                    summaryMetric("\(vm.runningTaskCount)", label: "ACTIVE", symbol: "arrow.down.circle")
                 }
             }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+
+            if vm.manifests.isEmpty {
+                AssppCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Image(systemName: "square.and.arrow.down.on.square")
+                            .font(.system(size: 35))
+                            .foregroundStyle(AssppTheme.accent)
+                        Text("Your downloads will appear here")
+                            .font(.title3.bold())
+                        Text("Find apps in Search or add a direct IPA link to begin.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        NavigationLink {
+                            AddDownloadView()
+                        } label: {
+                            Label("Add Download", systemImage: "plus")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            } else {
+                packageList
+            }
         }
-        .formStyle(.grouped)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(AssppTheme.background)
         .navigationDestination(for: PackageManifest.self) { manifest in
             PackageView(pkg: manifest)
         }
@@ -51,9 +77,30 @@ struct DownloadView: View {
         }
     }
 
+    private func summaryMetric(_ value: String, label: String, symbol: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(AssppTheme.accent)
+                .font(.subheadline)
+            Text(value)
+                .font(.title2.bold().monospacedDigit())
+                .foregroundStyle(.white)
+            Text(label)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .tracking(1)
+                .foregroundStyle(.white.opacity(0.5))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(AssppTheme.surface, in: RoundedRectangle(cornerRadius: 18))
+    }
+
     private var packageList: some View {
         ForEach(vm.manifests, id: \.id) { req in
             PackageManifestRow(manifest: req)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 7, leading: 18, bottom: 7, trailing: 18))
         }
     }
 }
@@ -67,16 +114,19 @@ private struct PackageManifestRow: View {
     @State private var shareOriginal: PreparedDecryptionPackage?
 
     var body: some View {
-        NavigationLink(value: manifest) {
-            VStack(spacing: 8) {
-                ArchivePreviewView(archive: manifest.package)
+        AssppCard {
+            VStack(alignment: .leading, spacing: 12) {
+                NavigationLink(value: manifest) {
+                    ArchivePreviewView(archive: manifest.package)
+                }
+                .buttonStyle(.plain)
                 SimpleProgress(progress: manifest.state.percent)
                     .animation(.interactiveSpring, value: manifest.state.percent)
-                HStack {
+                HStack(spacing: 10) {
                     switch decryptor.status(for: manifest) {
                     case .preparing:
                         Label("Preparing FairPlayed...", systemImage: "lock.open.fill")
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(AssppTheme.accent)
                     case .ready:
                         Label("Ready to Sign", systemImage: "checkmark.seal.fill")
                             .foregroundStyle(.green)
@@ -91,10 +141,35 @@ private struct PackageManifestRow: View {
                         Text(manifest.hint)
                     }
                     Spacer()
-                    Text(manifest.creation.formatted())
+                    Text(manifest.creation.formatted(date: .abbreviated, time: .omitted))
                 }
                 .font(.system(.footnote, design: .rounded))
-                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+                if manifest.completed {
+                    HStack(spacing: 10) {
+                        Button {
+                            decryptor.prepare(manifest)
+                        } label: {
+                            Label(decryptor.status(for: manifest) == .preparing ? "Preparing..." : "Decrypt IPA", systemImage: "lock.open.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(AssppTheme.accent)
+                        .disabled(decryptor.status(for: manifest) == .preparing)
+
+                        if decryptor.signedURL(for: manifest) != nil {
+                            Button {
+                                decryptor.install(manifest)
+                            } label: {
+                                Label("Install", systemImage: "arrow.down.app.fill")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
             }
         }
         .contextMenu {

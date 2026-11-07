@@ -45,6 +45,15 @@ struct PackageView: View {
     var body: some View {
         Form {
             Section {
+                AssppScreenHeader(
+                    eyebrow: "IPA  /  PACKAGE DETAILS",
+                    title: archive.software.name,
+                    subtitle: "Manage, decrypt and install your downloaded IPA.",
+                    symbol: "shippingbox.fill"
+                )
+            }
+            .listRowBackground(Color.clear)
+            Section {
                 ArchivePreviewView(archive: archive)
             } header: {
                 Text("Package")
@@ -245,6 +254,9 @@ struct PackageView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(AssppTheme.background)
+        .tint(AssppTheme.accent)
         .navigationTitle(pkg.package.software.name)
     }
 }

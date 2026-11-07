@@ -345,7 +345,7 @@
 			baseConfigurationReferenceAnchor = 50DCBBB42F346C57007100D2 /* Configuration */;
 			baseConfigurationReferenceRelativePath = Debug.xcconfig;
 			buildSettings = {
-				INFOPLIST_KEY_CFBundleDisplayName = "Asspp AuthFix";
+				INFOPLIST_KEY_CFBundleDisplayName = Asspp;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Asspp requires this permission to communicate with install service on your device.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -366,7 +366,7 @@
 					"$(inherited)",
 					"LookInsideServer*",
 				);
-				INFOPLIST_KEY_CFBundleDisplayName = "Asspp AuthFix";
+				INFOPLIST_KEY_CFBundleDisplayName = Asspp;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Asspp requires this permission to communicate with install service on your device.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
