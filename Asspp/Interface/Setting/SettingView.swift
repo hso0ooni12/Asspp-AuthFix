@@ -91,7 +91,7 @@ struct SettingView: View {
                         importingItem = .profile
                         importingIdentity = true
                     }
-                    SecureField(signer.hasPassword ? "P12 password saved • enter to replace" : "P12 certificate password", text: $signingPassword)
+                    SecureField(signer.hasPassword ? "Password saved • enter to replace" : "P12 password (optional)", text: $signingPassword)
                         .textContentType(.password)
                     Button(signer.hasPassword ? "Update P12 Password" : "Save P12 Password") {
                         do {
@@ -103,9 +103,20 @@ struct SettingView: View {
                         }
                         showSigningMessage = true
                     }
+                    .disabled(signingPassword.isEmpty)
+                    Button {
+                        signer.clearPassword()
+                        signingPassword = ""
+                        signingMessage = "No certificate password will be used. FairPlayed signing will try an empty P12 password."
+                        showSigningMessage = true
+                    } label: {
+                        Label("Use Without Password", systemImage: "lock.open")
+                    }
                     HStack {
                         Label(
-                            signer.isConfigured ? "Auto Sign Ready" : "Import both files and save the P12 password",
+                            signer.isConfigured
+                                ? (signer.hasPassword ? "Signing configured • password saved" : "Signing configured • no password")
+                                : "Import the P12 certificate and provisioning profile",
                             systemImage: signer.isConfigured ? "checkmark.shield.fill" : "exclamationmark.shield"
                         )
                         .font(.subheadline.weight(.semibold))
@@ -119,7 +130,7 @@ struct SettingView: View {
                 } header: {
                     Label("ON-DEVICE SIGNING", systemImage: "checkmark.shield.fill")
                 } footer: {
-                    Text("Your Apple Account remains for App Store downloads. The P12 certificate, profile, and password are stored in this device's Keychain, never uploaded to a server. Once configured, Decrypt also signs FairPlayed automatically. Your profile must support this device and the helper bundle ID.")
+                    Text("A P12 password is optional. If your certificate has no password, leave the field empty or tap Use Without Password. Protected certificates still need the correct password. Signing files are stored only on your device; Decrypt signs FairPlayed automatically when the certificate and profile are present.")
                 }
                 .listRowBackground(AssppTheme.surface)
 

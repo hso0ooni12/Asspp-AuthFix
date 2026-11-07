@@ -453,7 +453,10 @@ final class SigningCenter {
         hasPassword = Self.read(Self.passwordKey) != nil
     }
 
-    var isConfigured: Bool { hasCertificate && hasProfile && hasPassword }
+    // PKCS#12 supports an empty password. The signing library accepts an
+    // empty C string, so users only need to save a password when their
+    // certificate is actually password-protected.
+    var isConfigured: Bool { hasCertificate && hasProfile }
 
     enum Item { case certificate, profile }
 
@@ -469,16 +472,24 @@ final class SigningCenter {
     }
 
     func savePassword(_ password: String) throws {
+        if password.isEmpty {
+            clearPassword()
+            return
+        }
         try Self.save(Data(password.utf8), name: Self.passwordKey)
+        refresh()
+    }
+
+    func clearPassword() {
+        SecItemDelete(Self.query(Self.passwordKey) as CFDictionary)
         refresh()
     }
 
     func credentials() -> AssppSigningAssets? {
         guard let certificate = Self.read(Self.certificateKey),
-              let profile = Self.read(Self.profileKey),
-              let password = Self.read(Self.passwordKey),
-              let passwordText = String(data: password, encoding: .utf8)
+              let profile = Self.read(Self.profileKey)
         else { return nil }
+        let passwordText = Self.read(Self.passwordKey).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         return AssppSigningAssets(certificate: certificate, profile: profile, password: passwordText)
     }
 
