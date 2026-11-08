@@ -168,10 +168,17 @@ int AssppFPProcess(const char *source, const char *output, char *report, size_t 
         uint8_t *plain = malloc(s->cryptsize);
         if (!plain) { direct_note(&r, "Decrypt allocation failed.\n"); goto finish; }
         bool accepted = false;
-        // Both attempts use READ only and cryptid=2; no executable mapping/JIT.
-        for (int sigs = 0; sigs < 2 && !accepted; sigs++) {
+        // Same ordered mapping attempts as upstream's working FairPlayed
+        // helper: two read-only, then two RX/cryptid1 fallbacks. RX is mapped
+        // but NEVER executed: fp_attempt reads pages with vm_read_overwrite.
+        // Any kernel rejection is logged, and cannot produce a partial IPA.
+        static const struct { int mode; bool addsigs; } attempts[] = {
+            {FP_MODE_R_CID2, false}, {FP_MODE_R_CID2, true},
+            {FP_MODE_RX_CID1, false}, {FP_MODE_RX_CID1, true},
+        };
+        for (size_t attempt = 0; attempt < sizeof attempts / sizeof attempts[0] && !accepted; attempt++) {
             fp_attempt_t a; char description[768];
-            fp_attempt(source, s, FP_MODE_R_CID2, sigs != 0, plain, &a);
+            fp_attempt(source, s, attempts[attempt].mode, attempts[attempt].addsigs, plain, &a);
             fp_attempt_describe(&a, description, sizeof description);
             accepted = attempt_looks_decrypted(&a);
             direct_note(&r, "slice %d: %s; accepted=%d\n", i, description, accepted);
