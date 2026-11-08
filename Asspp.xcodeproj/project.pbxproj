@@ -342,6 +342,7 @@
 			baseConfigurationReferenceRelativePath = Debug.xcconfig;
 			buildSettings = {
 				INFOPLIST_KEY_CFBundleDisplayName = Velo;
+				INFOPLIST_KEY_CFBundleName = Velo;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Velo requires this permission to communicate with install service on your device.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -362,6 +363,7 @@
 					"$(inherited)",
 				);
 				INFOPLIST_KEY_CFBundleDisplayName = Velo;
+				INFOPLIST_KEY_CFBundleName = Velo;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Velo requires this permission to communicate with install service on your device.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
