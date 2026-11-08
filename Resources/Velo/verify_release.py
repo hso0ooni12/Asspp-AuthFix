@@ -7,9 +7,9 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "4.8.0"
-BUILD = "2026110822"
-IPA_NAME = "Velo-R18-Streamlined-unsigned.ipa"
+VERSION = "4.8.1"
+BUILD = "2026110823"
+IPA_NAME = "Velo-R22-Batch-Stable-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()
@@ -26,9 +26,17 @@ def validate_sources():
     assert "FreeLicensePolicy.shouldAcquire" in coordinator
     assert "ApplePackage.Purchase.purchase" in coordinator
     assert "rotatePasswordToken" in coordinator
+    assert "AccountDownloadGate" in coordinator
+    manager = (ROOT / "Asspp/Backend/Downloader/Downloads.swift").read_text()
+    assert "activeTransferIDs" in manager and "finalizingIDs" in manager
     quick = (ROOT / "Asspp/Interface/Search/QuickDownloadButton.swift").read_text()
     assert "Free License Required" not in quick
     assert "acquireFreeLicense" not in quick
+    assert "request.state.percent" in quick and ".trim(from: 0" in quick
+    downloads_view = (ROOT / "Asspp/Interface/Download/DownloadView.swift").read_text()
+    assert "selectedIDs" in downloads_view and "prepareBatch" in downloads_view
+    decryptor = (ROOT / "Asspp/Interface/Download/PackageView.swift").read_text()
+    assert "FairPlayedBatchArchive" in decryptor and "compressionMethod: .none" in decryptor
     auth = (ROOT / "Asspp/Interface/Account/AddAccountView.swift").read_text()
     assert "prepareSecureConnection" in auth and "setupTask.value" in auth
     service = (ROOT / "Asspp/Backend/AppStore/StoreDownloadService.swift").read_text()
@@ -41,7 +49,7 @@ def validate_sources():
         code = (ROOT / ("Asspp/Interface/" + name + ".swift")).read_text()
         assert "ASS•PP" not in code, name
     assert not (ROOT / "Asspp/Backend/Decryption/DirectFairPlayed.swift").exists()
-    print("PASS R18 core, stable R20 transport, Velo identity, login preconnect, free license policy")
+    print("PASS R18 core, R20 transport, Velo UI, guarded deletion, two transfers, batch helper ZIP")
 
 def validate_archive():
     spec = importlib.util.spec_from_file_location("r17_checks", ROOT / "Resources/R17/verify_release.py")
@@ -73,6 +81,11 @@ def validate_archive():
         directDecryptionOfNewDownloads=False,
         deviceValidation="Physical iPhone testing required for sign-in and free license requests",
         measuredSpeedImprovement="not benchmarked in CI",
+        guardedDeletion=True,
+        concurrentDownloads="Two byte transfers, serialized metadata per account",
+        progressInSearch=True,
+        bulkExport="ZIP of unsigned FairPlayed helpers, not decrypted IPAs",
+        deviceTesting="Deletion and multiple iPhone downloads require device verification",
     )
     path.write_text(json.dumps(report, indent=2) + "\n")
     print("PASS signed-helper template, IPA metadata, icon catalog and archive integrity")
@@ -84,3 +97,4 @@ if __name__ == "__main__":
     validate_sources()
     if not args.source_only:
         validate_archive()
+

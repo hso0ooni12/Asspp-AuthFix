@@ -9,6 +9,12 @@ import SwiftUI
 
 struct DownloadView: View {
     @State private var vm = Downloads.this
+    @State private var decryptor = DecryptionCenter.shared
+    @State private var selectionMode = false
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var deletionID: UUID?
+    @State private var showDeleteConfirmation = false
+    @State private var showBatchError = false
 
     var body: some View {
         NavigationStack {
@@ -35,6 +41,60 @@ struct DownloadView: View {
             }
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
+
+            if selectionMode {
+                AssppCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("\(selectedIDs.count) apps selected")
+                                .font(.headline)
+                            Spacer()
+                            Button("Select All") {
+                                selectedIDs = Set(vm.manifests.filter(\.completed).map(\.id))
+                            }
+                            .font(.subheadline)
+                            Button("Clear") { selectedIDs.removeAll() }
+                                .font(.subheadline)
+                        }
+                        Button {
+                            let chosen = vm.manifests.filter {
+                                $0.completed && selectedIDs.contains($0.id)
+                            }
+                            decryptor.prepareBatch(chosen)
+                            selectionMode = false
+                            selectedIDs.removeAll()
+                        } label: {
+                            Label(selectedIDs.count == 1 ? "Prepare Decryptor" :
+                                    "Prepare \(selectedIDs.count) Decryptors as ZIP",
+                                  systemImage: "lock.open.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(selectedIDs.isEmpty || decryptor.isPreparingBatch)
+                        Text("For multiple apps, Velo exports one ZIP of FairPlayed helpers to sign. Each helper decrypts its app after installation.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+            if decryptor.isPreparingBatch {
+                AssppCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Preparing \(decryptor.batchCompleted) of \(decryptor.batchTotal)")
+                            .font(.subheadline.bold())
+                        ProgressView(value: Double(decryptor.batchCompleted),
+                                     total: Double(max(decryptor.batchTotal, 1)))
+                            .tint(AssppTheme.accent)
+                        Text("Keep Velo open while the helper IPAs are packaged.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
 
             if vm.manifests.isEmpty {
                 AssppCard {
@@ -70,7 +130,36 @@ struct DownloadView: View {
         .navigationDestination(for: PackageManifest.self) { manifest in
             PackageView(pkg: manifest)
         }
+        .confirmationDialog("Delete this download?", isPresented: $showDeleteConfirmation) {
+            Button("Delete Download", role: .destructive) {
+                let id = deletionID
+                deletionID = nil
+                // Dismiss the swipe/confirmation UI before changing the List.
+                Task { @MainActor in
+                    await Task.yield()
+                    if let id, let request = vm.manifests.first(where: { $0.id == id }) {
+                        vm.delete(request: request)
+                    }
+                }
+            }
+        } message: {
+            Text("The original IPA is removed. Prepared FairPlayed helpers are kept.")
+        }
+        .alert("Bulk Preparation", isPresented: $showBatchError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(decryptor.batchError ?? "Unable to prepare the selected apps.")
+        }
+        .onChange(of: decryptor.batchError) { _, message in
+            showBatchError = message != nil
+        }
         .toolbar {
+            if !vm.manifests.filter(\.completed).isEmpty {
+                Button(selectionMode ? "Done" : "Select") {
+                    selectionMode.toggle()
+                    if !selectionMode { selectedIDs.removeAll() }
+                }
+            }
             NavigationLink(destination: AddDownloadView()) {
                 Image(systemName: "plus")
             }
@@ -97,7 +186,25 @@ struct DownloadView: View {
 
     private var packageList: some View {
         ForEach(vm.manifests, id: \.id) { req in
-            PackageManifestRow(manifest: req)
+            HStack(spacing: 12) {
+                if selectionMode {
+                    Button {
+                        guard req.completed else { return }
+                        if !selectedIDs.insert(req.id).inserted { selectedIDs.remove(req.id) }
+                    } label: {
+                        Image(systemName: selectedIDs.contains(req.id) ?
+                              "checkmark.circle.fill" : "circle")
+                            .font(.title2)
+                            .foregroundStyle(req.completed ? AssppTheme.accent : .gray)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!req.completed)
+                }
+                PackageManifestRow(manifest: req) {
+                    deletionID = req.id
+                    showDeleteConfirmation = true
+                }
+            }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 7, leading: 18, bottom: 7, trailing: 18))
@@ -107,9 +214,9 @@ struct DownloadView: View {
 
 private struct PackageManifestRow: View {
     let manifest: PackageManifest
+    let onDelete: () -> Void
     @State private var vm = Downloads.this
     @State private var decryptor = DecryptionCenter.shared
-    @State private var showDeleteConfirmation = false
     @State private var showPreparationError = false
     @State private var showDetails = false
     @State private var shareOriginal: PreparedDecryptionPackage?
@@ -200,7 +307,7 @@ private struct PackageManifestRow: View {
                 let label = vm.getActionLabel(for: action)
                 Button(role: label.isDestructive ? .destructive : .none) {
                     if action == .delete {
-                        showDeleteConfirmation = true
+                        onDelete()
                     } else {
                         vm.performDownloadAction(for: manifest, action: action)
                     }
@@ -222,17 +329,10 @@ private struct PackageManifestRow: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
-                showDeleteConfirmation = true
+                onDelete()
             } label: {
                 Label("Delete", systemImage: "trash")
             }
-        }
-        .confirmationDialog("Delete this download?", isPresented: $showDeleteConfirmation) {
-            Button("Delete Download", role: .destructive) {
-                vm.delete(request: manifest)
-            }
-        } message: {
-            Text("The downloaded IPA will be removed. A previously prepared FairPlayed helper is retained.")
         }
         .alert("Preparation Details", isPresented: $showPreparationError) {
             Button("OK", role: .cancel) {}
@@ -259,7 +359,7 @@ extension PackageManifest {
         }
         return switch state.status {
         case .pending:
-            String(localized: "Pending...")
+            String(localized: "Queued / Preparing...")
         case .downloading:
             [
                 String(Int(state.percent * 100)) + "%",
@@ -276,3 +376,4 @@ extension PackageManifest {
         }
     }
 }
+

@@ -1,0 +1,229 @@
+name: Velo R22 - Batch and Download Stability
+
+on:
+  push:
+    branches: [r22-velo-batch-stable]
+    paths:
+      - "Asspp/Backend/AppStore/**"
+      - "Asspp/Interface/Download/PackageView.swift"
+      - "Resources/AuthFix/build.sh"
+      - "Resources/AuthFix/prepare.py"
+      - "Resources/R3/KBSyncBridge/**"
+      - "Resources/FairPlayed/one-page-stub.patch"
+      - "Resources/FairPlayed/auto-export-and-share.patch"
+      - "Resources/FairPlayed/helper-icon.jpg.base64"
+      - "Asspp/Interface/Welcome/MainView.swift"
+      - "Asspp/Interface/Download/DownloadView.swift"
+      - "Asspp/Interface/Setting/SettingView.swift"
+      - "Resources/R18/**"
+      - "Resources/Velo/**"
+      - "Asspp/Backend/Downloader/**"
+      - "Asspp/Backend/Installer/Installer.swift"
+      - "Asspp/Backend/Installer/Installer+Compute.swift"
+      - "Resources/R13/**"
+      - "Asspp/Interface/**"
+      - "Asspp/App/**"
+      - "Asspp.xcodeproj/**"
+      - ".github/workflows/velo-batch-ipa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: velo-r22-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-velo-ios:
+    runs-on: macos-26
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.0"
+      - name: Select Xcode and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          best_path=""
+          best_ver=""
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            case "$app" in *beta*|*Beta*|*_RC*) continue ;; esac
+            ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true)
+            [ -n "$ver" ] || continue
+            if [ -z "$best_ver" ] || [ "$(printf '%s\n%s\n' "$best_ver" "$ver" | sort -V | tail -1)" = "$ver" ]; then
+              best_ver="$ver"
+              best_path="$app"
+            fi
+          done
+          [ -n "$best_path" ] || { echo 'No Xcode found'; exit 1; }
+          sudo xcode-select -s "$best_path"
+          xcodebuild -version
+          command -v xcbeautify >/dev/null || brew install xcbeautify
+      - name: Verify free-only license automation and Velo identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc -swift-version 6 -parse-as-library \
+            Asspp/Backend/Downloader/FreeLicensePolicy.swift \
+            Resources/Velo/FreeLicensePolicyChecks.swift \
+            -o "${RUNNER_TEMP}/free-license-checks"
+          "${RUNNER_TEMP}/free-license-checks"
+          python3 Resources/Velo/verify_release.py --source-only
+      - name: Verify concurrent download preparation behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc -swift-version 6 -parse-as-library \
+            Asspp/Backend/AppStore/DownloadPreparation.swift \
+            Resources/R18/DownloadPreparationChecks.swift \
+            -o "${RUNNER_TEMP}/download-preparation-checks"
+          "${RUNNER_TEMP}/download-preparation-checks"
+      - name: Build pinned FairPlayed engine and embed helper shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/morzelowski/FairPlayed.git "${RUNNER_TEMP}/FairPlayed"
+          git -C "${RUNNER_TEMP}/FairPlayed" checkout --detach bad7df138839b5e0ac8b9f20cc4689140b8436fb
+          git -C "${RUNNER_TEMP}/FairPlayed" apply --check "${GITHUB_WORKSPACE}/Resources/FairPlayed/one-page-stub.patch"
+          git -C "${RUNNER_TEMP}/FairPlayed" apply "${GITHUB_WORKSPACE}/Resources/FairPlayed/one-page-stub.patch"
+          grep -F 'one_page_stub' "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed/fpcore.c"
+          git -C "${RUNNER_TEMP}/FairPlayed" apply --check "${GITHUB_WORKSPACE}/Resources/FairPlayed/auto-export-and-share.patch"
+          git -C "${RUNNER_TEMP}/FairPlayed" apply "${GITHUB_WORKSPACE}/Resources/FairPlayed/auto-export-and-share.patch"
+          grep -F 'autoExportStarted' "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed/main.m"
+          xcodebuild \
+            -project "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed.xcodeproj" \
+            -scheme FairPlayed -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "${RUNNER_TEMP}/FairPlayedBuild" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build > "${RUNNER_TEMP}/fairplayed-build.log" 2>&1 || { tail -120 "${RUNNER_TEMP}/fairplayed-build.log"; exit 1; }
+          shell_app="${RUNNER_TEMP}/FairPlayedBuild/Build/Products/Release-iphoneos/FairPlayed.app"
+          test -s "${shell_app}/FairPlayed"
+          # Give every generated FairPlayed helper one permanent, polished icon.
+          base64 -D -i Resources/FairPlayed/helper-icon.jpg.base64 -o "${RUNNER_TEMP}/FairPlayedIcon.jpg"
+          sips -s format png "${RUNNER_TEMP}/FairPlayedIcon.jpg" --out "${shell_app}/FairPlayedIcon.png" > /dev/null
+          test -s "${shell_app}/FairPlayedIcon.png"
+          icon_plist="${shell_app}/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleIcons' "${icon_plist}" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons dict' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons:CFBundlePrimaryIcon dict' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles array' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:0 string FairPlayedIcon' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string FairPlayedIcon' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:0' "${icon_plist}"
+
+          ditto -c -k --keepParent "${shell_app}" Asspp/FairPlayed-shell.zip
+          unzip -tq Asspp/FairPlayed-shell.zip
+          echo "Pinned FairPlayed shell bundled into Asspp without user file selection"
+      - name: Build pinned iOS arm64 KBSync bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream="${RUNNER_TEMP}/ipatool-upstream"
+          git clone --depth 1 --branch v2.7.0 https://github.com/majd/ipatool.git "$upstream"
+          mkdir -p "$upstream/cmd/r3bridge"
+          cp Resources/R3/KBSyncBridge/main.go "$upstream/cmd/r3bridge/main.go"
+          cd "$upstream"
+          export GOOS=ios GOARCH=arm64 CGO_ENABLED=1
+          export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
+          export CC="$(xcrun --sdk iphoneos --find clang)"
+          export CGO_CFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
+          export CGO_LDFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
+          go build -trimpath -buildmode=c-archive -o "${RUNNER_TEMP}/libR3KBSync.a" ./cmd/r3bridge
+          test -s "${RUNNER_TEMP}/libR3KBSync.a"
+      - name: Build pinned Unicorn TCI no-JIT static library for iOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v cmake >/dev/null || brew install cmake
+          checkout="${RUNNER_TEMP}/unicorn-tci-source"
+          git clone --depth 1 https://github.com/1rhino2/unicorn-tci.git "${checkout}"
+          git -C "${checkout}" fetch --depth 1 origin e3f075a62742913bb734a55a474aec65c9e5745e
+          git -C "${checkout}" checkout --detach e3f075a62742913bb734a55a474aec65c9e5745e
+          ios_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          ARCHFLAGS="-arch arm64" cmake \
+            -S "${checkout}/unicorn-engine-sys-tci" -B "${RUNNER_TEMP}/r6-tci-build" \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="${ios_sdk}" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+            -DCMAKE_C_FLAGS="-target arm64-apple-ios17.0" \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+            -DUNICORN_ARCH=x86 -DUNICORN_BUILD_TESTS=OFF -DUNICORN_INSTALL=OFF \
+            -DUNICORN_INTERPRETER=ON
+          grep -E "^UNICORN_INTERPRETER:BOOL=ON$" "${RUNNER_TEMP}/r6-tci-build/CMakeCache.txt"
+          cmake --build "${RUNNER_TEMP}/r6-tci-build" --parallel "$(sysctl -n hw.ncpu)"
+          archive="${RUNNER_TEMP}/r6-tci-build/libunicorn.a"
+          test -s "${archive}"
+          xcrun nm -g "${archive}" > "${RUNNER_TEMP}/r6-tci-exports.txt"
+          grep -F " _uc_version" "${RUNNER_TEMP}/r6-tci-exports.txt" > /dev/null
+          grep -F " _uc_emu_start" "${RUNNER_TEMP}/r6-tci-exports.txt" > /dev/null
+      - name: Generate modern Velo app icon in every required size
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift Resources/Velo/make_icon.swift "${RUNNER_TEMP}/VeloIcon.png"
+          src="${RUNNER_TEMP}/VeloIcon.png"
+          icons="Asspp/App/Assets.xcassets/AppIcon.appiconset"
+          test -s "$src"
+          for name in asspp.png asspp_dark.png asspp_tinted.png asspp_appstore.png; do
+            sips -s format png -z 1024 1024 "$src" --out "$icons/$name" >/dev/null
+          done
+          for size in 16 32 64 128 256 512; do
+            sips -s format png -z "$size" "$size" "$src" --out "$icons/asspp_${size}.png" >/dev/null
+          done
+      - name: Build Velo unsigned IPA from stable R18 core
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          R3_KBSYNC_ARCHIVE: ${{ runner.temp }}/libR3KBSync.a
+          R6_TCI_ARCHIVE: ${{ runner.temp }}/r6-tci-build/libunicorn.a
+        run: |
+          set -euo pipefail
+          sed -i '' -e 's/4.2.7/4.8.1/g' -e 's/2026110705/2026110823/g' Resources/AuthFix/build.sh
+          bash Resources/AuthFix/build.sh
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-R22-Batch-Stable-unsigned.ipa
+          shasum -a 256 artifacts/Velo-R22-Batch-Stable-unsigned.ipa > artifacts/Velo-R22-Batch-Stable-unsigned.ipa.sha256
+          unzip -Z -1 artifacts/Velo-R22-Batch-Stable-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
+          unzip -p artifacts/Velo-R22-Batch-Stable-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
+          unzip -tq "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
+          unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayed'
+          unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayedIcon.png'
+      - name: Verify download engine is linked and internal signing is absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          executable=".build-authfix/DerivedData/Build/Products/Release-iphoneos/Asspp.app/Asspp"
+          test -s "${executable}"
+          xcrun nm -gU "${executable}" > "${RUNNER_TEMP}/r6-linked-exports.txt"
+          grep -Eq '[[:space:]]_uc_version$' "${RUNNER_TEMP}/r6-linked-exports.txt"
+          grep -Eq '[[:space:]]_uc_open$' "${RUNNER_TEMP}/r6-linked-exports.txt"
+          grep -Eq '[[:space:]]_R3GenerateKBSync$' "${RUNNER_TEMP}/r6-linked-exports.txt"
+          if grep -Eq '[[:space:]]_AssppSignIPA$' "${RUNNER_TEMP}/r6-linked-exports.txt"; then
+            echo '::error::Retired internal signer must not be linked'
+            exit 1
+          fi
+          python3 Resources/Velo/verify_release.py
+          echo "KBSync and Unicorn TCI are linked; internal signing is absent"
+      - name: Upload Velo IPA and diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: Velo-R22-Batch-Stable-unsigned
+          path: |
+            artifacts/Velo-R22-Batch-Stable-unsigned.ipa
+            artifacts/Velo-R22-Batch-Stable-unsigned.ipa.sha256
+            artifacts/build-info.json
+            artifacts/transport-tests.log
+            artifacts/sap-setup-probe-result.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload build errors
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Velo-build-errors
+          path: artifacts/*.log
+          if-no-files-found: ignore
+

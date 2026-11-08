@@ -95,6 +95,12 @@ xcodebuild -workspace Asspp.xcworkspace -scheme Asspp -configuration Release \
   INFOPLIST_KEY_CFBundleDisplayName='Velo' INFOPLIST_KEY_CFBundleName='Velo' \
   "${extra_xcodebuild_flags[@]}" build 2>&1 | tee artifacts/build.log | xcbeautify
 
+# Xcode synthesizes CFBundleName from PRODUCT_NAME after processing the
+# INFOPLIST_KEY override. Keep the executable and bundle identifier untouched
+# for existing installs, but set the app's user-facing short name in the IPA.
+/usr/libexec/PlistBuddy -c 'Set :CFBundleName Velo' \
+  .build-authfix/DerivedData/Build/Products/Release-iphoneos/Asspp.app/Info.plist
+
 python3 - <<'PY'
 from pathlib import Path
 import hashlib, json, plistlib, shutil, zipfile
@@ -129,3 +135,4 @@ report = dict(expected, sourceRevision='773583a29c6b1f1b0d0783d0a15d3ddafcd85eec
 (root / 'artifacts/build-info.json').write_text(json.dumps(report, indent=2) + '\n')
 print(json.dumps(report, indent=2))
 PY
+

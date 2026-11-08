@@ -66,8 +66,41 @@ struct DownloadRequestIdentity: Hashable {
     let version: String?
 }
 
+/// Apple account cookies and purchase/download tokens are mutable. In particular,
+/// AppStore.withAccount reads a value, awaits a network operation, then writes
+/// it back. Overlapping requests for different apps on the same Apple ID can
+/// overwrite one another. Serialize only account metadata/license work; the
+/// large IPA transfers still run concurrently (two at a time).
+private actor AccountDownloadGate {
+    static let shared = AccountDownloadGate()
+    private var held: Set<String> = []
+    private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    func acquire(_ accountID: String) async {
+        if held.insert(accountID).inserted { return }
+        await withCheckedContinuation { continuation in
+            waiters[accountID, default: []].append(continuation)
+        }
+    }
+
+    func release(_ accountID: String) {
+        if var queue = waiters[accountID], !queue.isEmpty {
+            let next = queue.removeFirst()
+            if queue.isEmpty { waiters.removeValue(forKey: accountID) }
+            else { waiters[accountID] = queue }
+            next.resume()
+        } else {
+            held.remove(accountID)
+        }
+    }
+}
+
 extension Downloads {
     func startDownload(for package: AppStore.AppPackage, accountID: String) async throws {
+        if let existing = downloadRequest(forArchive: package),
+           [.pending, .downloading, .completed].contains(existing.state.status) {
+            return
+        }
         let key = DownloadRequestIdentity(accountID: accountID,
                                           bundleID: package.software.bundleID,
                                           appID: package.software.id,
@@ -77,7 +110,20 @@ extension Downloads {
             try await existing.value
             return
         }
+        if let existing = pendingDownloadRequests.first(where: {
+            $0.key.bundleID == key.bundleID &&
+                $0.key.platform == key.platform &&
+                $0.key.version == key.version
+        })?.value {
+            try await existing.value
+            return
+        }
         let task = Task { @MainActor in
+            await AccountDownloadGate.shared.acquire(accountID)
+            // Defer is synchronous; scheduling this release still preserves
+            // FIFO ownership inside AccountDownloadGate.
+            defer { Task { await AccountDownloadGate.shared.release(accountID) } }
+            try Task.checkCancellation()
             try await AppStore.this.withAccount(id: accountID) { account in
                 let downloadOutput: DownloadOutput
                 do {
@@ -118,3 +164,4 @@ extension Downloads {
         try await task.value
     }
 }
+

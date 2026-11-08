@@ -232,8 +232,11 @@ struct PackageView: View {
                 let deleteAction = DownloadAction.delete
                 let label = downloads.getActionLabel(for: deleteAction)
                 Button(label.title) {
-                    Task { downloads.performDownloadAction(for: pkg, action: deleteAction) }
                     dismiss()
+                    Task { @MainActor in
+                        await Task.yield()
+                        downloads.performDownloadAction(for: pkg, action: deleteAction)
+                    }
                 }
                 .foregroundStyle(label.isDestructive ? .red : .primary)
             } header: {
@@ -279,6 +282,10 @@ final class DecryptionCenter {
 
     var statuses: [UUID: DecryptionPreparationStatus] = [:]
     var sharePackage: PreparedDecryptionPackage?
+    var isPreparingBatch = false
+    var batchCompleted = 0
+    var batchTotal = 0
+    var batchError: String?
 
     @ObservationIgnored private var running: Set<UUID> = []
 
@@ -344,6 +351,54 @@ final class DecryptionCenter {
         }
     }
 
+    /// Multi-select prepares the same tested helper as the single-item path.
+    /// The ZIP contains unsigned helpers, NOT already decrypted app binaries.
+    /// Each helper must be signed/installed and opened to produce its result.
+    func prepareBatch(_ manifests: [PackageManifest]) {
+        let selected = manifests.filter(\.completed)
+        guard !selected.isEmpty, !isPreparingBatch else { return }
+        if selected.count == 1 {
+            prepare(selected[0])
+            return
+        }
+        isPreparingBatch = true
+        batchCompleted = 0
+        batchTotal = selected.count
+        batchError = nil
+        let inputs = selected.map { manifest in
+            statuses[manifest.id] = .preparing
+            return FairPlayedBatchArchive.Input(
+                id: manifest.id,
+                downloadedIPA: manifest.targetLocation,
+                bundleID: manifest.package.software.bundleID,
+                name: manifest.package.software.name,
+                version: manifest.package.software.version,
+                existingHelper: preparedURL(for: manifest)
+            )
+        }
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try FairPlayedBatchArchive.create(inputs: inputs) { finished in
+                        Task { @MainActor in
+                            DecryptionCenter.shared.batchCompleted = finished
+                        }
+                    }
+                }.value
+                for (id, file) in result.helpers {
+                    UserDefaults.standard.set(file.path, forKey: "Asspp.PreparedFairPlayed.\(id.uuidString)")
+                    statuses[id] = .ready
+                }
+                batchCompleted = batchTotal
+                sharePackage = PreparedDecryptionPackage(url: result.archive)
+            } catch {
+                batchError = error.localizedDescription
+                for input in inputs { statuses[input.id] = .failed(error.localizedDescription) }
+            }
+            isPreparingBatch = false
+        }
+    }
+
     private func key(for manifest: PackageManifest) -> String {
         "Asspp.PreparedFairPlayed.\(manifest.id.uuidString)"
     }
@@ -353,16 +408,19 @@ final class DecryptionCenter {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey])) ?? []
         let signedDir = documentsDirectory.appendingPathComponent("FairPlayed/Signed", isDirectory: true)
         let signed = (try? FileManager.default.contentsOfDirectory(at: signedDir, includingPropertiesForKeys: [.fileSizeKey])) ?? []
-        return (files + signed).reduce(0) { sum, file in
+        let exportsDir = documentsDirectory.appendingPathComponent("FairPlayed/Exports", isDirectory: true)
+        let exports = (try? FileManager.default.contentsOfDirectory(at: exportsDir, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        return (files + signed + exports).reduce(0) { sum, file in
             sum + Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         }
     }
 
     func clearPreparedHelpers() {
-        for name in ["Prepared", "Signed"] {
+        guard !isPreparingBatch else { return }
+        for name in ["Prepared", "Signed", "Exports"] {
             let dir = documentsDirectory.appendingPathComponent("FairPlayed/\(name)", isDirectory: true)
             let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-            for file in files where file.pathExtension.lowercased() == "ipa" {
+            for file in files where ["ipa", "zip"].contains(file.pathExtension.lowercased()) {
                 try? FileManager.default.removeItem(at: file)
             }
         }
@@ -373,6 +431,65 @@ final class DecryptionCenter {
         }
         statuses.removeAll()
         sharePackage = nil
+    }
+}
+
+/// Batch export stays entirely in Velo's document container and uses hard
+/// links while packing so each large helper IPA is not copied a third time.
+private enum FairPlayedBatchArchive {
+    struct Input: Sendable {
+        let id: UUID
+        let downloadedIPA: URL
+        let bundleID: String
+        let name: String
+        let version: String
+        let existingHelper: URL?
+    }
+
+    struct Result: Sendable {
+        let archive: URL
+        let helpers: [UUID: URL]
+    }
+
+    static func create(inputs: [Input], progress: @escaping @Sendable (Int) -> Void) throws -> Result {
+        let fm = FileManager.default
+        let base = documentsDirectory.appendingPathComponent("FairPlayed", isDirectory: true)
+        let root = base.appendingPathComponent("BatchBuild-" + UUID().uuidString, isDirectory: true)
+        let stage = root.appendingPathComponent("FairPlayed-Helpers", isDirectory: true)
+        try fm.createDirectory(at: stage, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        var prepared: [UUID: URL] = [:]
+        for (index, input) in inputs.enumerated() {
+            try Task.checkCancellation()
+            let helper: URL
+            if let existing = input.existingHelper,
+               fm.fileExists(atPath: existing.path) {
+                helper = existing
+            } else {
+                helper = try FairPlayedHelper.prepare(
+                    downloadedIPA: input.downloadedIPA,
+                    expectedBundleID: input.bundleID,
+                    name: input.name,
+                    version: input.version
+                )
+            }
+            prepared[input.id] = helper
+            let destination = stage.appendingPathComponent(helper.lastPathComponent)
+            do {
+                try fm.linkItem(at: helper, to: destination)
+            } catch {
+                try fm.copyItem(at: helper, to: destination)
+            }
+            progress(index + 1)
+        }
+        let exports = base.appendingPathComponent("Exports", isDirectory: true)
+        try fm.createDirectory(at: exports, withIntermediateDirectories: true)
+        let output = exports.appendingPathComponent("Velo-FairPlayed-Helpers-" +
+            String(UUID().uuidString.prefix(8)) + ".zip")
+        // IPA is already compressed; storing without recompression is faster.
+        try fm.zipItem(at: stage, to: output, shouldKeepParent: false,
+                       compressionMethod: .none)
+        return Result(archive: output, helpers: prepared)
     }
 }
 
@@ -555,3 +672,4 @@ enum FairPlayedHelper {
     }
 }
 #endif
+

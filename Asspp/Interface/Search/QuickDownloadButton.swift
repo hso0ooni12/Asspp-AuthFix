@@ -20,11 +20,37 @@ struct QuickDownloadButton: View {
         Group {
             if let request = downloads.downloadRequest(forArchive: package) {
                 NavigationLink(value: request) {
-                    Image(systemName: request.completed ? "checkmark.circle.fill" : "arrow.down.circle")
-                        .font(.title3)
-                        .frame(width: 62, height: 40)
+                    Group {
+                        if request.completed {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.title3)
+                        } else {
+                            ZStack {
+                                Circle()
+                                    .stroke(AssppTheme.accent.opacity(0.18), lineWidth: 4)
+                                Circle()
+                                    .trim(from: 0, to: min(max(request.state.percent, 0), 1))
+                                    .stroke(AssppTheme.accent,
+                                            style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                                    .rotationEffect(.degrees(-90))
+                                if request.state.status == .pending && request.state.percent == 0 {
+                                    ProgressView()
+                                        .tint(AssppTheme.accent)
+                                        .scaleEffect(0.7)
+                                } else {
+                                    Text("\(Int(min(max(request.state.percent, 0), 1) * 100))%")
+                                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                                        .monospacedDigit()
+                                        .foregroundStyle(AssppTheme.accent)
+                                }
+                            }
+                            .frame(width: 35, height: 35)
+                        }
+                    }
+                    .frame(width: 62, height: 40)
                 }
-                .accessibilityLabel("Show Download")
+                .accessibilityLabel(request.completed ? "Download complete" :
+                    "Downloading, \(Int(request.state.percent * 100)) percent. Show download")
                 .buttonStyle(.bordered)
             } else {
                 Button(action: selectAccount) {
@@ -86,3 +112,4 @@ struct QuickDownloadButton: View {
         }
     }
 }
+

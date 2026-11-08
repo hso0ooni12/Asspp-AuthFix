@@ -27,6 +27,12 @@ class Downloads {
     @ObservationIgnored
     private var registeredCallbacks: Set<UUID> = []
 
+    /// Limit transfers to two independent IPAs. Apple's metadata/auth requests
+    /// are serialized per account separately; byte transfers can overlap.
+    @ObservationIgnored private var activeTransferIDs: Set<UUID> = []
+    @ObservationIgnored private var queuedTransferIDs: [UUID] = []
+    @ObservationIgnored private var finalizingIDs: Set<UUID> = []
+
     /// Share one metadata request when multiple entry points request the same
     /// account, app, platform and version at once.
     @ObservationIgnored
@@ -58,7 +64,9 @@ class Downloads {
     private(set) var runningTaskCount: Int = 0
 
     private func refreshRunningTaskCount() {
-        runningTaskCount = manifests.count(where: { $0.state.status == .downloading })
+        runningTaskCount = manifests.count(where: {
+            $0.state.status == .pending || $0.state.status == .downloading
+        })
     }
 
     private init() {
@@ -85,7 +93,11 @@ class Downloads {
 
     func suspend(request: PackageManifest) {
         logger.info("suspending download request id: \(request.id)")
-        DiggerManager.shared.stopTask(for: request.url)
+        queuedTransferIDs.removeAll { $0 == request.id }
+        if activeTransferIDs.contains(request.id) {
+            DiggerManager.shared.stopTask(for: request.url)
+            releaseTransferSlot(request.id)
+        }
         request.state.resetIfNotCompleted()
         refreshRunningTaskCount()
         saveManifests()
@@ -93,6 +105,20 @@ class Downloads {
 
     func resume(request: PackageManifest) {
         logger.info("resuming download request id: \(request.id)")
+        guard manifests.contains(where: { $0.id == request.id }) else { return }
+        if !activeTransferIDs.contains(request.id) {
+            if activeTransferIDs.count >= 2 {
+                if !queuedTransferIDs.contains(request.id) {
+                    queuedTransferIDs.append(request.id)
+                }
+                request.state.start()
+                refreshRunningTaskCount()
+                saveManifests()
+                return
+            }
+            activeTransferIDs.insert(request.id)
+            queuedTransferIDs.removeAll { $0 == request.id }
+        }
         request.state.start()
         let seed = DiggerManager.shared.download(with: request.url)
 
@@ -107,6 +133,7 @@ class Downloads {
         seed
             .speed { speedBytes in
                 Task { @MainActor in
+                    guard self.manifests.contains(where: { $0.id == request.id }) else { return }
                     guard request.state.status == .downloading || request.state.status == .pending else { return }
                     let wasDownloading = request.state.status == .downloading
                     var newState = request.state
@@ -120,9 +147,13 @@ class Downloads {
             }
             .progress { progress in
                 Task { @MainActor in
+                    guard self.manifests.contains(where: { $0.id == request.id }) else { return }
                     guard request.state.status == .downloading || request.state.status == .pending else { return }
                     let now = CFAbsoluteTimeGetCurrent()
-                    let fraction = progress.fractionCompleted
+                    // Digger can report a transient out-of-range fraction
+                    // during cancellation/size reconciliation. PackageState
+                    // asserts that percent stays within zero and one.
+                    let fraction = min(max(progress.fractionCompleted, 0), 1)
                     let last = self.lastProgressUpdates[request.id] ?? 0
                     guard fraction >= 1.0 || (now - last) >= 0.2 else { return }
                     self.lastProgressUpdates[request.id] = now
@@ -140,26 +171,44 @@ class Downloads {
             .completion { completion in
                 Task { @MainActor in
                     self.registeredCallbacks.remove(request.id)
+                    guard self.manifests.contains(where: { $0.id == request.id }) else {
+                        self.releaseTransferSlot(request.id)
+                        return
+                    }
                     switch completion {
                     case let .success(url):
+                        self.finalizingIDs.insert(request.id)
                         Task.detached {
                             do {
                                 try await self.finalize(manifest: request, preparedContentAt: url)
                                 await MainActor.run {
-                                    request.state.complete()
+                                    self.finalizingIDs.remove(request.id)
+                                    if self.manifests.contains(where: { $0.id == request.id }) {
+                                        request.state.complete()
+                                    } else {
+                                        request.delete()
+                                    }
+                                    self.releaseTransferSlot(request.id)
                                     self.refreshRunningTaskCount()
                                     self.saveManifests()
                                     #if os(iOS)
                                         // Optional foreground preparation; signing and installation
                                         // of the resulting helper remain separate user actions.
-                                        if UserDefaults.standard.bool(forKey: "Asspp.AutoPrepareDecrypt") {
+                                        if self.manifests.contains(where: { $0.id == request.id }),
+                                           UserDefaults.standard.bool(forKey: "Asspp.AutoPrepareDecrypt") {
                                             DecryptionCenter.shared.prepare(request)
                                         }
                                     #endif
                                 }
                             } catch {
                                 await MainActor.run {
-                                    request.state.error = error.localizedDescription
+                                    self.finalizingIDs.remove(request.id)
+                                    if self.manifests.contains(where: { $0.id == request.id }) {
+                                        request.state.error = error.localizedDescription
+                                    } else {
+                                        request.delete()
+                                    }
+                                    self.releaseTransferSlot(request.id)
                                     self.refreshRunningTaskCount()
                                     self.saveManifests()
                                 }
@@ -175,6 +224,7 @@ class Downloads {
                             request.state.error = error.localizedDescription
                             self.saveManifests()
                         }
+                        self.releaseTransferSlot(request.id)
                         self.refreshRunningTaskCount()
                     }
                 }
@@ -214,26 +264,46 @@ class Downloads {
 
     func delete(request: PackageManifest) {
         logger.info("deleting download request id: \(request.id)")
-        DiggerManager.shared.cancelTask(for: request.url)
-        registeredCallbacks.remove(request.id)
-        request.delete()
+        // Remove the observable row before doing any filesystem cleanup.
+        // A successful transfer may still be injecting signatures; let its
+        // completion clean up rather than removing the file underneath it.
         manifests.removeAll(where: { $0.id == request.id })
+        queuedTransferIDs.removeAll { $0 == request.id }
+        // Digger is not guaranteed to retain a task for an already-completed
+        // download. Never cancel a stale URL when deleting a finished IPA.
+        if activeTransferIDs.contains(request.id) {
+            DiggerManager.shared.cancelTask(for: request.url)
+        }
+        registeredCallbacks.remove(request.id)
+        releaseTransferSlot(request.id)
+        if !finalizingIDs.contains(request.id) { request.delete() }
+        lastProgressUpdates.removeValue(forKey: request.id)
         refreshRunningTaskCount()
+        saveManifests()
     }
 
     func restart(request: PackageManifest) {
         logger.info("restarting download request id: \(request.id)")
         DiggerManager.shared.cancelTask(for: request.url)
         registeredCallbacks.remove(request.id)
+        releaseTransferSlot(request.id)
         request.delete()
         request.state = .init()
         resume(request: request)
     }
 
     func removeAll() {
-        manifests.forEach { $0.delete() }
-        manifests.removeAll()
-        registeredCallbacks.removeAll()
-        refreshRunningTaskCount()
+        for manifest in manifests { delete(request: manifest) }
+    }
+
+    private func releaseTransferSlot(_ id: UUID) {
+        guard activeTransferIDs.remove(id) != nil else { return }
+        while activeTransferIDs.count < 2 && !queuedTransferIDs.isEmpty {
+            let nextID = queuedTransferIDs.removeFirst()
+            guard let next = manifests.first(where: { $0.id == nextID }),
+                  next.state.status == .pending else { continue }
+            resume(request: next)
+        }
     }
 }
+
