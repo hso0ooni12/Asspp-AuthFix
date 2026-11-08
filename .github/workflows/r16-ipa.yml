@@ -162,6 +162,7 @@ jobs:
       - name: Build R16 integrated unsigned IPA
         shell: bash
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           R3_KBSYNC_ARCHIVE: ${{ runner.temp }}/libR3KBSync.a
           R6_TCI_ARCHIVE: ${{ runner.temp }}/r6-tci-build/libunicorn.a
           R12_SIGNER_ARCHIVE: ${{ runner.temp }}/AssppSignerBuild/libAssppSigner.a
