@@ -56,7 +56,7 @@ def validate_archive():
     with zipfile.ZipFile(ROOT / "artifacts" / IPA_NAME) as archive:
         metadata = plistlib.loads(archive.read("Payload/Asspp.app/Info.plist"))
         assert metadata["CFBundleDisplayName"] == "Velo"
-        assert metadata["CFBundleName"] == "Velo", metadata, metadata
+        assert metadata["CFBundleName"] == "Velo", metadata
         assert metadata["CFBundleIdentifier"] == "wiki.qaq.Asspp.AuthFix"
         assert any(p.endswith("Assets.car") for p in archive.namelist())
     path = ROOT / "artifacts/build-info.json"
