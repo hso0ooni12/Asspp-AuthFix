@@ -31,7 +31,7 @@ struct SettingView: View {
         @State private var decryptor = DecryptionCenter.shared
         @State private var signer = SigningCenter.shared
         @State private var importingIdentity = false
-        @State private var importingItem: SigningCenter.Item = .certificate
+        @State private var showPasswordOptions = false
         @State private var signingPassword = ""
         @State private var signingMessage = ""
         @State private var showSigningMessage = false
@@ -72,65 +72,72 @@ struct SettingView: View {
             #if os(iOS)
                 Section {
                     HStack {
-                        Label("Certificate (.p12)", systemImage: "checkmark.shield")
-                        Spacer()
-                        Text(signer.hasCertificate ? "Imported" : "Missing")
-                            .foregroundStyle(signer.hasCertificate ? Color.green : Color.secondary)
-                    }
-                    Button("Import P12 Certificate") {
-                        importingItem = .certificate
-                        importingIdentity = true
-                    }
-                    HStack {
-                        Label("Provisioning Profile", systemImage: "doc.badge.gearshape")
-                        Spacer()
-                        Text(signer.hasProfile ? "Imported" : "Missing")
-                            .foregroundStyle(signer.hasProfile ? Color.green : Color.secondary)
-                    }
-                    Button("Import Mobileprovision") {
-                        importingItem = .profile
-                        importingIdentity = true
-                    }
-                    SecureField(signer.hasPassword ? "Password saved • enter to replace" : "P12 password (optional)", text: $signingPassword)
-                        .textContentType(.password)
-                    Button(signer.hasPassword ? "Update P12 Password" : "Save P12 Password") {
-                        do {
-                            try signer.savePassword(signingPassword)
-                            signingPassword = ""
-                            signingMessage = "Signing password saved securely on this device."
-                        } catch {
-                            signingMessage = error.localizedDescription
+                        Image(systemName: signer.isConfigured ? "checkmark.shield.fill" : "shield.lefthalf.filled")
+                            .font(.title2)
+                            .foregroundStyle(signer.isConfigured ? .green : AssppTheme.accent)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(signer.isConfigured ? "Signing files imported" : "Set up automatic signing")
+                                .font(.headline)
+                            Text(signer.isConfigured
+                                ? "Your certificate and profile are saved on this iPhone."
+                                : "Import your P12 certificate and provisioning profile.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
                         }
-                        showSigningMessage = true
+                        Spacer()
                     }
-                    .disabled(signingPassword.isEmpty)
                     Button {
-                        signer.clearPassword()
-                        signingPassword = ""
-                        signingMessage = "No certificate password will be used. FairPlayed signing will try an empty P12 password."
-                        showSigningMessage = true
+                        importingIdentity = true
                     } label: {
-                        Label("Use Without Password", systemImage: "lock.open")
+                        Label(signer.isConfigured ? "Replace or Add Signing Files" : "Import Signing Files", systemImage: "folder.badge.plus")
+                            .frame(maxWidth: .infinity, alignment: .center)
                     }
-                    HStack {
-                        Label(
-                            signer.isConfigured
-                                ? (signer.hasPassword ? "Signing configured • password saved" : "Signing configured • no password")
-                                : "Import the P12 certificate and provisioning profile",
-                            systemImage: signer.isConfigured ? "checkmark.shield.fill" : "exclamationmark.shield"
-                        )
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(signer.isConfigured ? AssppTheme.accent : .orange)
+                    .buttonStyle(.borderedProminent)
+                    .tint(AssppTheme.accent)
+
+                    HStack(spacing: 18) {
+                        Label(signer.hasCertificate ? "P12 ✓" : "P12 needed",
+                              systemImage: signer.hasCertificate ? "checkmark.circle.fill" : "circle.dotted")
+                        Label(signer.hasProfile ? "Profile ✓" : "Profile needed",
+                              systemImage: signer.hasProfile ? "checkmark.circle.fill" : "circle.dotted")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(signer.isConfigured ? .green : .secondary)
+
+                    DisclosureGroup("Certificate password · only if needed", isExpanded: $showPasswordOptions) {
+                        SecureField("Certificate password", text: $signingPassword)
+                            .textContentType(.password)
+                        Button("Save Password") {
+                            do {
+                                try signer.savePassword(signingPassword)
+                                signingPassword = ""
+                                signingMessage = "Certificate password saved securely on your device."
+                            } catch {
+                                signingMessage = error.localizedDescription
+                            }
+                            showSigningMessage = true
+                        }
+                        .disabled(signingPassword.isEmpty)
+                        if signer.hasPassword {
+                            Button("Clear Saved Password") {
+                                signer.clearPassword()
+                                signingPassword = ""
+                            }
+                        }
+                        Text("Leave this empty normally. Asspp automatically tries a blank password and the default 1 before asking for a password.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                     if signer.hasCertificate || signer.hasProfile || signer.hasPassword {
-                        Button("Remove Signing Identity", role: .destructive) {
+                        Button("Remove Signing Files", role: .destructive) {
                             showRemoveSignerConfirmation = true
                         }
+                        .font(.footnote)
                     }
                 } header: {
-                    Label("ON-DEVICE SIGNING", systemImage: "checkmark.shield.fill")
+                    Label("AUTO SIGNING", systemImage: "checkmark.shield.fill")
                 } footer: {
-                    Text("A P12 password is optional. If your certificate has no password, leave the field empty or tap Use Without Password. Protected certificates still need the correct password. Signing files are stored only on your device; Decrypt signs FairPlayed automatically when the certificate and profile are present.")
+                    Text("Select both files together, select them separately, or import a ZIP containing the pair. Credentials stay on this device.")
                 }
                 .listRowBackground(AssppTheme.surface)
 
@@ -281,13 +288,12 @@ struct SettingView: View {
         .sheet(isPresented: $importingIdentity) {
             // UIKit's import-as-copy picker accepts security files from Files
             // providers which the generic SwiftUI `.item` importer greyed out.
-            SigningDocumentPicker(item: importingItem) { result in
+            SigningDocumentPicker { result in
                 importingIdentity = false
                 switch result {
-                case let .success(url):
+                case let .success(urls):
                     do {
-                        try signer.importFile(url, as: importingItem)
-                        signingMessage = "Signing file imported successfully."
+                        signingMessage = try signer.importFiles(urls)
                     } catch {
                         signingMessage = error.localizedDescription
                     }
@@ -343,19 +349,15 @@ struct SettingView: View {
 
 #if os(iOS)
 private struct SigningDocumentPicker: UIViewControllerRepresentable {
-    let item: SigningCenter.Item
-    let onPicked: (Result<URL, Error>) -> Void
+    let onPicked: (Result<[URL], Error>) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onPicked: onPicked) }
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let extensions = item == .certificate ? ["p12", "pfx"] : ["mobileprovision", "provisionprofile"]
-        var types: [UTType] = extensions.compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
-        // These common base types let Files providers expose certificates even
-        // when their proprietary UTType is not declared on that provider.
-        types.append(contentsOf: [.data, .content, .item])
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
-        picker.allowsMultipleSelection = false
+        // An unrestrictive picker avoids dimming the P12/mobileprovision files
+        // that some third-party Files providers expose under unknown UTTypes.
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item, .data], asCopy: true)
+        picker.allowsMultipleSelection = true
         picker.delegate = context.coordinator
         return picker
     }
@@ -363,13 +365,13 @@ private struct SigningDocumentPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
 
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPicked: (Result<URL, Error>) -> Void
-        init(onPicked: @escaping (Result<URL, Error>) -> Void) {
+        let onPicked: (Result<[URL], Error>) -> Void
+        init(onPicked: @escaping (Result<[URL], Error>) -> Void) {
             self.onPicked = onPicked
         }
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let url = urls.first else { return }
-            onPicked(.success(url))
+            guard !urls.isEmpty else { return }
+            onPicked(.success(urls))
         }
     }
 }

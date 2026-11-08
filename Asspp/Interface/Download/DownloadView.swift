@@ -110,6 +110,7 @@ private struct PackageManifestRow: View {
     @State private var vm = Downloads.this
     @State private var decryptor = DecryptionCenter.shared
     @State private var showDeleteConfirmation = false
+    @State private var showSigningError = false
     @State private var showDetails = false
     @State private var shareOriginal: PreparedDecryptionPackage?
 
@@ -134,9 +135,14 @@ private struct PackageManifestRow: View {
                         Label("Ready to Install", systemImage: "checkmark.shield.fill")
                             .foregroundStyle(.green)
                     case let .failed(message):
-                        Label(message, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                            .lineLimit(2)
+                        Button {
+                            showSigningError = true
+                        } label: {
+                            Label(message, systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.red)
+                                .lineLimit(2)
+                        }
+                        .buttonStyle(.plain)
                     case .idle:
                         Text(manifest.hint)
                     }
@@ -248,6 +254,15 @@ private struct PackageManifestRow: View {
             }
         } message: {
             Text("The downloaded IPA will be removed. A previously prepared FairPlayed helper is retained.")
+        }
+        .alert("Signing Details", isPresented: $showSigningError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if case let .failed(message) = decryptor.status(for: manifest) {
+                Text(message)
+            } else {
+                Text("No signing error is currently recorded.")
+            }
         }
         .sheet(item: $shareOriginal) { item in
             AssppActivityShare(items: [item.url])

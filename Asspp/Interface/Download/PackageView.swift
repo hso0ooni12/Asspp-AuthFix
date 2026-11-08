@@ -523,6 +523,75 @@ final class SigningCenter {
 
     enum Item { case certificate, profile }
 
+    // One Files selection can contain a P12, a provisioning profile, both,
+    // or a ZIP containing the pair. No extra file-type or password screens.
+    func importFiles(_ urls: [URL]) throws -> String {
+        guard !urls.isEmpty else { return "No files selected." }
+        var certificate: Data?
+        var profile: Data?
+
+        func receive(_ filename: String, data: Data) throws {
+            let ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
+            guard !data.isEmpty && data.count <= 2_000_000 else {
+                throw NSError(domain: "AssppSigner", code: 20,
+                              userInfo: [NSLocalizedDescriptionKey: "Signing files must each be under 2 MB."])
+            }
+            switch ext {
+            case "p12", "pfx": certificate = data
+            case "mobileprovision", "provisionprofile": profile = data
+            default: break
+            }
+        }
+
+        for url in urls {
+            let granted = url.startAccessingSecurityScopedResource()
+            defer { if granted { url.stopAccessingSecurityScopedResource() } }
+            if url.pathExtension.lowercased() == "zip" {
+                let container = try FileManager.default.attributesOfItem(atPath: url.path)
+                guard ((container[.size] as? NSNumber)?.int64Value ?? 0) <= 12_000_000 else {
+                    throw NSError(domain: "AssppSigner", code: 21,
+                                  userInfo: [NSLocalizedDescriptionKey: "The certificate ZIP is unexpectedly large."])
+                }
+                let archive = try Archive(url: url, accessMode: .read)
+                var count = 0
+                for entry in archive {
+                    count += 1
+                    guard count <= 80 else { break }
+                    let ext = URL(fileURLWithPath: entry.path).pathExtension.lowercased()
+                    guard ["p12", "pfx", "mobileprovision", "provisionprofile"].contains(ext),
+                          entry.uncompressedSize <= 2_000_000 else { continue }
+                    var bytes = Data()
+                    _ = try archive.extract(entry) { chunk in
+                        guard chunk.count <= 2_000_000 - bytes.count else {
+                            throw NSError(domain: "AssppSigner", code: 22,
+                                          userInfo: [NSLocalizedDescriptionKey: "A ZIP entry is too large."])
+                        }
+                        bytes.append(chunk)
+                    }
+                    try receive(entry.path, data: bytes)
+                }
+            } else {
+                let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+                guard ((attrs[.size] as? NSNumber)?.int64Value ?? 0) <= 2_000_000 else {
+                    throw NSError(domain: "AssppSigner", code: 24,
+                                  userInfo: [NSLocalizedDescriptionKey: "The selected file is unexpectedly large."])
+                }
+                try receive(url.lastPathComponent, data: Data(contentsOf: url))
+            }
+        }
+        guard certificate != nil || profile != nil else {
+            throw NSError(domain: "AssppSigner", code: 23,
+                          userInfo: [NSLocalizedDescriptionKey: "Choose .p12, .mobileprovision, or a ZIP containing them."])
+        }
+        if let certificate { try Self.save(certificate, name: Self.certificateKey) }
+        if let profile { try Self.save(profile, name: Self.profileKey) }
+        refresh()
+        if certificate != nil && profile != nil { return "Certificate and profile imported. Signing is ready." }
+        return certificate != nil
+            ? "Certificate imported. Add the provisioning profile to finish."
+            : "Provisioning profile imported. Add the P12 certificate to finish."
+    }
+
     func importFile(_ url: URL, as item: Item) throws {
         let granted = url.startAccessingSecurityScopedResource()
         defer { if granted { url.stopAccessingSecurityScopedResource() } }

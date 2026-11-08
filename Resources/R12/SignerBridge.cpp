@@ -100,11 +100,15 @@ static std::string diagnoseIdentity(const char *p12Path, const char *password,
     bool parsed = PKCS12_parse(p12, password, &key, &cert, &chain) == 1;
     if (!parsed && (!password || !password[0]))
         parsed = PKCS12_parse(p12, NULL, &key, &cert, &chain) == 1;
+    if (!parsed && (!password || !password[0]))
+        parsed = PKCS12_parse(p12, "1", &key, &cert, &chain) == 1;
     PKCS12_free(p12);
 
     std::string reason;
     if (!parsed || !key || !cert) {
-        reason = "P12 private key cannot be opened with the saved password (including empty-password variants).";
+        reason = (!password || !password[0])
+            ? "P12 private key did not open with empty password or LCSign's documented default (1). Enter its actual password in Settings."
+            : "P12 private key did not open with the saved password. Review the password in Settings.";
     } else {
         bool paired = false;
         for (size_t i = 0; i < plist["DeveloperCertificates"].size(); ++i) {
@@ -147,6 +151,12 @@ extern "C" int AssppSignIPA(const char *inputIPA,
     ZLog::SetLogLever(ZLog::E_WARN);
     std::unique_ptr<ZSignAsset> identity(new ZSignAsset());
     bool loaded = identity->Init("", p12Path, profilePath, "", p12Password, false, true, false);
+    if (!loaded && p12Password[0] == '\0') {
+        // LCSign's official installation flow tries the common default "1"
+        // when the password field is empty. This stays completely on-device.
+        identity.reset(new ZSignAsset());
+        loaded = identity->Init("", p12Path, profilePath, "", "1", false, true, false);
+    }
     if (!loaded && p12Password[0] == '\0') {
         const std::string compatiblePath = std::string(workDirectory) + "/AssppCompatible.p12";
         std::string compatiblePassword;
