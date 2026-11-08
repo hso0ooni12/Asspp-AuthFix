@@ -92,7 +92,7 @@ xcodebuild -workspace Asspp.xcworkspace -scheme Asspp -configuration Release \
   DEVELOPMENT_TEAM= CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
   CODE_SIGN_ENTITLEMENTS= MARKETING_VERSION=4.2.7 CURRENT_PROJECT_VERSION=2026110705 \
   PRODUCT_BUNDLE_IDENTIFIER=wiki.qaq.Asspp.AuthFix \
-  INFOPLIST_KEY_CFBundleDisplayName='Velo' \
+  INFOPLIST_KEY_CFBundleDisplayName='Velo' INFOPLIST_KEY_CFBundleName='Velo' \
   "${extra_xcodebuild_flags[@]}" build 2>&1 | tee artifacts/build.log | xcbeautify
 
 python3 - <<'PY'
