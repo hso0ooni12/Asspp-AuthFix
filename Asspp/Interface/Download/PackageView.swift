@@ -513,7 +513,6 @@ enum FairPlayedHelper {
         let embedded = helper.appendingPathComponent("EmbeddedPayload", isDirectory: true)
         if fm.fileExists(atPath: embedded.path) { try fm.removeItem(at: embedded) }
         try fm.createDirectory(at: embedded, withIntermediateDirectories: true)
-        var embeddedNames: [String] = []
 
         // FairPlayed must be signed with the target inside its own app bundle.
         // Dropping .app on the embedded directory keeps encrypted code as resources.
@@ -565,6 +564,7 @@ enum FairPlayedHelper {
         let embedded = helper.appendingPathComponent("EmbeddedPayload", isDirectory: true)
         if fm.fileExists(atPath: embedded.path) { try fm.removeItem(at: embedded) }
         try fm.createDirectory(at: embedded, withIntermediateDirectories: true)
+        var embeddedNames: [String] = []
 
         for (index, entry) in inputs.enumerated() {
             try Task.checkCancellation()
