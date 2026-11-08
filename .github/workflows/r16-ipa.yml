@@ -7,6 +7,7 @@ on:
       - "Asspp/Backend/AppStore/**"
       - "Asspp/Interface/Download/PackageView.swift"
       - "Resources/AuthFix/build.sh"
+      - "Resources/AuthFix/prepare.py"
       - "Resources/R3/KBSyncBridge/**"
       - "Resources/FairPlayed/one-page-stub.patch"
       - "Resources/FairPlayed/auto-export-and-share.patch"
