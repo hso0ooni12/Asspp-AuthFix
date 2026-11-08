@@ -201,6 +201,7 @@ struct MainView: View {
             .sheet(item: $decryptor.installer) { installer in
                 InstallerView(installer: installer)
             }
+            .modifier(ConfirmProvisionedHelperInstall())
             .tint(AssppTheme.accent)
             .preferredColorScheme(.dark)
         }
@@ -227,8 +228,31 @@ struct MainView: View {
             .sheet(item: $decryptor.installer) { installer in
                 InstallerView(installer: installer)
             }
+            .modifier(ConfirmProvisionedHelperInstall())
             .tint(AssppTheme.accent)
             .preferredColorScheme(.dark)
+        }
+    }
+
+    private struct ConfirmProvisionedHelperInstall: ViewModifier {
+        @State private var decryptor = DecryptionCenter.shared
+
+        func body(content: Content) -> some View {
+            content.confirmationDialog(
+                "Confirm FairPlayed Installation",
+                isPresented: Binding(
+                    get: { decryptor.pendingInstall != nil },
+                    set: { if !$0 { decryptor.pendingInstall = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Continue Installation", role: .destructive) {
+                    decryptor.confirmPendingInstall()
+                }
+                Button("Cancel", role: .cancel) { decryptor.pendingInstall = nil }
+            } message: {
+                Text("Your signing profile requires the app identifier \(decryptor.pendingInstall?.bundleID ?? ""). Installing FairPlayed with that identifier may replace an existing installed app that uses it. Continue only if you are comfortable with that risk.")
+            }
         }
     }
 #endif

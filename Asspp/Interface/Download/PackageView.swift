@@ -267,6 +267,11 @@ struct PreparedDecryptionPackage: Identifiable {
     var id: String { url.path }
 }
 
+struct PendingHelperInstallation {
+    let manifest: PackageManifest
+    let bundleID: String
+}
+
 struct AssppActivityShare: UIViewControllerRepresentable {
     let items: [Any]
 
@@ -291,6 +296,7 @@ final class DecryptionCenter {
     var statuses: [UUID: DecryptionPreparationStatus] = [:]
     var sharePackage: PreparedDecryptionPackage?
     var installer: Installer?
+    var pendingInstall: PendingHelperInstallation?
 
     @ObservationIgnored private var running: Set<UUID> = []
 
@@ -327,13 +333,46 @@ final class DecryptionCenter {
             statuses[manifest.id] = .failed("No signed IPA found. Prepare Decrypt again.")
             return
         }
+        do {
+            let identifier = try Self.helperBundleID(in: file)
+            if identifier != "com.thehacker.ipastudio.helper" {
+                // An exact provisioning profile might be assigned to an app
+                // already installed on this iPhone. Never replace that app
+                // without an explicit choice from the user.
+                pendingInstall = PendingHelperInstallation(manifest: manifest, bundleID: identifier)
+                return
+            }
+            startInstall(manifest, file: file, bundleID: identifier)
+        } catch {
+            statuses[manifest.id] = .failed("Cannot validate the signed helper: \(error.localizedDescription)")
+        }
+    }
+
+    func confirmPendingInstall() {
+        guard let request = pendingInstall else { return }
+        pendingInstall = nil
+        guard let file = signedURL(for: request.manifest) else {
+            statuses[request.manifest.id] = .failed("Signed IPA not found. Prepare it again.")
+            return
+        }
+        do {
+            guard try Self.helperBundleID(in: file) == request.bundleID else {
+                statuses[request.manifest.id] = .failed("Signed IPA changed. Review it and try again.")
+                return
+            }
+            startInstall(request.manifest, file: file, bundleID: request.bundleID)
+        } catch {
+            statuses[request.manifest.id] = .failed("Cannot validate the signed helper: \(error.localizedDescription)")
+        }
+    }
+
+    private func startInstall(_ manifest: PackageManifest, file: URL, bundleID: String) {
         Task {
             do {
-                // The helper's identifier differs from the original App Store app.
                 installer = try await Installer(
                     archive: manifest.package,
                     path: file,
-                    installBundleID: "com.thehacker.ipastudio.helper",
+                    installBundleID: bundleID,
                     installName: manifest.package.software.name + " Decryptor",
                     installVersion: "1.0"
                 )
@@ -341,6 +380,30 @@ final class DecryptionCenter {
                 statuses[manifest.id] = .failed("Installer unavailable: \(error.localizedDescription). Share the signed IPA instead.")
             }
         }
+    }
+
+    private static func helperBundleID(in url: URL) throws -> String {
+        let archive = try Archive(url: url, accessMode: .read)
+        guard let entry = archive["Payload/FairPlayed.app/Info.plist"],
+              entry.uncompressedSize <= 1_048_576 else {
+            throw NSError(domain: "AssppSigner", code: 11,
+                          userInfo: [NSLocalizedDescriptionKey: "The IPA has no valid helper Info.plist."])
+        }
+        var data = Data()
+        _ = try archive.extract(entry) { chunk in
+            guard chunk.count <= 1_048_576 - data.count else {
+                throw NSError(domain: "AssppSigner", code: 12,
+                              userInfo: [NSLocalizedDescriptionKey: "The helper Info.plist is too large."])
+            }
+            data.append(chunk)
+        }
+        guard let info = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let identifier = info["CFBundleIdentifier"] as? String,
+              !identifier.isEmpty else {
+            throw NSError(domain: "AssppSigner", code: 13,
+                          userInfo: [NSLocalizedDescriptionKey: "The signed helper is missing its bundle ID."])
+        }
+        return identifier
     }
 
     func prepare(_ manifest: PackageManifest) {
