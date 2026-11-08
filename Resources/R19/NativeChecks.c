@@ -93,6 +93,10 @@ int main(void) {
     fp_attempt_t attempt; fp_slice_t slice = {0};
     assert(fp_attempt(source, &slice, FP_MODE_R_CID1, false, NULL, &attempt) == -1);
     assert(attempt.mmap_errno == ENOTSUP);
+    // RX/cryptid1 must reach ordinary validation rather than being pre-blocked.
+    // This deliberately invalid slice is rejected before any mapping.
+    assert(fp_attempt(source, &slice, FP_MODE_RX_CID1, false, NULL, &attempt) == -1);
+    assert(attempt.mmap_errno != ENOTSUP);
     unlink(source); assert(symlink("/nonexistent", source) == 0);
     assert(AssppFPInspect(source, note, sizeof note) == -1);
     unlink(source); rmdir(dir);
