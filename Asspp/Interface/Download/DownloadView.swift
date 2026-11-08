@@ -22,9 +22,9 @@ struct DownloadView: View {
         List {
             VStack(alignment: .leading, spacing: 18) {
                 AssppScreenHeader(
-                    eyebrow: "ASS•PP  /  IPA MANAGER",
+                    eyebrow: "VELO  /  IPA MANAGER",
                     title: "Downloads",
-                    subtitle: "Your downloads and FairPlayed helpers in one place.",
+                    subtitle: "Downloads, organized.",
                     symbol: "arrow.down.to.line.compact"
                 )
                 HStack(spacing: 12) {

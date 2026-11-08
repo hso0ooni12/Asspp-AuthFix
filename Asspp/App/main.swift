@@ -15,13 +15,13 @@ LoggingSystem.bootstrap { label in
 }
 
 let logger = {
-    var logger = Logger(label: "wiki.qaq.asspp")
+    var logger = Logger(label: "velo")
     logger.logLevel = .debug
     return logger
 }()
 
 APLogger.verbose = false
-APLogger.logger = Logger(label: "wiki.qaq.asspp.applepackage")
+APLogger.logger = Logger(label: "velo.applepackage")
 
 let version = [
     Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
@@ -31,7 +31,7 @@ let version = [
 .joined(separator: " ")
 
 let bundleIdentifier = Bundle.main.bundleIdentifier!
-logger.info("Asspp \(bundleIdentifier) \(version) starting up...")
+logger.info("Velo \(bundleIdentifier) \(version) starting up...")
 logger.info("Platform: \(ProcessInfo.processInfo.operatingSystemVersionString)")
 
 private let availableDirectories = FileManager

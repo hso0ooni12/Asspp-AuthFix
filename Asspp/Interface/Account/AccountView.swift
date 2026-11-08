@@ -125,31 +125,13 @@ struct AccountView: View {
         private var iOSBody: some View {
             NavigationStack(path: $navigationPath) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 16) {
                         AssppScreenHeader(
-                            eyebrow: "ASS•PP  /  YOUR LIBRARY",
+                            eyebrow: "VELO  /  YOUR LIBRARY",
                             title: "Accounts",
                             subtitle: "Connect your App Store account to discover and download your apps.",
                             symbol: "person.crop.circle.badge.checkmark"
                         )
-
-                        AssppCard {
-                            HStack(spacing: 13) {
-                                Image(systemName: "lock.shield.fill")
-                                    .font(.title2)
-                                    .foregroundStyle(AssppTheme.accent)
-                                    .frame(width: 48, height: 48)
-                                    .background(AssppTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 15))
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Private by design")
-                                        .font(.headline)
-                                    Text("Your account credentials stay on your device.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 0)
-                            }
-                        }
 
                         HStack {
                             Text("CONNECTED ACCOUNTS")

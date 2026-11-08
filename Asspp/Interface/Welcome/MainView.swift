@@ -170,8 +170,8 @@ struct MainView: View {
                 .disabled(selection == nil)
             }
             CommandGroup(replacing: .help) {
-                Button("Asspp Help", systemImage: "") {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/Lakr233/Asspp")!)
+                Button("Velo Help", systemImage: "") {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/hso0ooni12/Asspp-AuthFix")!)
                 }
             }
         }
@@ -260,26 +260,26 @@ struct AssppScreenHeader: View {
     let symbol: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 7) {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(eyebrow.uppercased())
                     .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .tracking(2.4)
+                    .tracking(1.5)
                     .foregroundStyle(AssppTheme.accent)
                 Text(title)
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
                     .tracking(-1.2)
                     .foregroundStyle(.white)
                 Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.61))
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.68))
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 4)
             Image(systemName: symbol)
-                .font(.system(size: 25, weight: .medium))
+                .font(.system(size: 22, weight: .medium))
                 .foregroundStyle(AssppTheme.accent)
-                .frame(width: 58, height: 58)
+                .frame(width: 50, height: 50)
                 .background(AssppTheme.accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 18))
                 .overlay(RoundedRectangle(cornerRadius: 18).stroke(AssppTheme.accent.opacity(0.24)))
         }
@@ -296,9 +296,9 @@ struct AssppCard<Content: View>: View {
 
     var body: some View {
         content
-            .padding(18)
+            .padding(15)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AssppTheme.surface, in: RoundedRectangle(cornerRadius: 23, style: .continuous))
+            .background(AssppTheme.surface, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 23, style: .continuous)
                     .stroke(AssppTheme.separator, lineWidth: 1)

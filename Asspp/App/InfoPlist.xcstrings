@@ -8,7 +8,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Asspp"
+            "value" : "Velo"
           }
         },
         "zh-Hans" : {
@@ -26,7 +26,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Asspp"
+            "value" : "Velo"
           }
         },
         "zh-Hans" : {
@@ -44,7 +44,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Asspp requires this permission to communicate with install service on your device."
+            "value" : "Velo requires this permission to communicate with install service on your device."
           }
         },
         "zh-Hans" : {

@@ -19,7 +19,7 @@ struct WelcomeView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 80, height: 80)
 
-                Text("Welcome to Asspp")
+                Text("Welcome to Velo")
                     .font(.system(.headline, design: .rounded))
 
                 Spacer().frame(height: 0)

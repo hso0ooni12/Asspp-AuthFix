@@ -147,7 +147,7 @@ struct PackageView: View {
                     } header: {
                         Text("FairPlay Decryption")
                     } footer: {
-                        Text("Asspp prepares a FairPlayed IPA containing this download. Sign and install that IPA using your signing app. Opening it starts decryption automatically and shares the complete result. Signing Asspp itself does not remove this separate requirement.")
+                        Text("Velo prepares a FairPlayed IPA containing this download. Sign and install that IPA using your signing app. Opening it starts decryption automatically and shares the complete result. Signing Asspp itself does not remove this separate requirement.")
                     }
                 #endif
 

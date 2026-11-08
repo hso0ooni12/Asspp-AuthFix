@@ -341,9 +341,9 @@
 			baseConfigurationReferenceAnchor = 50DCBBB42F346C57007100D2 /* Configuration */;
 			baseConfigurationReferenceRelativePath = Debug.xcconfig;
 			buildSettings = {
-				INFOPLIST_KEY_CFBundleDisplayName = Asspp;
+				INFOPLIST_KEY_CFBundleDisplayName = Velo;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Asspp requires this permission to communicate with install service on your device.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Velo requires this permission to communicate with install service on your device.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -361,9 +361,9 @@
 				EXCLUDED_SOURCE_FILE_NAMES = (
 					"$(inherited)",
 				);
-				INFOPLIST_KEY_CFBundleDisplayName = Asspp;
+				INFOPLIST_KEY_CFBundleDisplayName = Velo;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Asspp requires this permission to communicate with install service on your device.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Velo requires this permission to communicate with install service on your device.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

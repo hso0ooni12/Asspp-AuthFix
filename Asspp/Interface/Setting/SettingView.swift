@@ -49,9 +49,9 @@ struct SettingView: View {
         Form {
             Section {
                 AssppScreenHeader(
-                    eyebrow: "ASS•PP  /  CONTROL CENTER",
+                    eyebrow: "VELO  /  CONTROL CENTER",
                     title: "Settings",
-                    subtitle: "Manage downloads, helper preparation and privacy.",
+                    subtitle: "Simple controls. Advanced options when needed.",
                     symbol: "slider.horizontal.3"
                 )
                 .padding(.vertical, 6)
@@ -75,7 +75,7 @@ struct SettingView: View {
                 } header: {
                     Label("DECRYPTION", systemImage: "lock.open.fill")
                 } footer: {
-                    Text("When a download finishes, Asspp can prepare and share a FairPlayed helper automatically. The helper must then be signed and installed using your signing app. Decryption starts automatically when the helper opens.")
+                    Text("When a download finishes, Velo can prepare and share a FairPlayed helper automatically. The helper must then be signed and installed using your signing app. Decryption starts automatically when the helper opens.")
                 }
                 .listRowBackground(AssppTheme.surface)
                 .confirmationDialog("Remove all prepared FairPlayed helpers?", isPresented: $showClearPreparedConfirmation) {

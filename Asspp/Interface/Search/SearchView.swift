@@ -259,11 +259,11 @@ extension SearchView {
     extension SearchView {
         var modernContent: some View {
             ScrollView {
-                VStack(alignment: .leading, spacing: 19) {
+                VStack(alignment: .leading, spacing: 15) {
                     AssppScreenHeader(
-                        eyebrow: "ASS•PP  /  APP STORE",
+                        eyebrow: "VELO  /  APP STORE",
                         title: "Discover",
-                        subtitle: "Find the exact app and version you need.",
+                        subtitle: "Find apps. Download in one tap.",
                         symbol: "magnifyingglass"
                     )
 

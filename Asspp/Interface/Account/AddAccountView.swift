@@ -32,8 +32,8 @@ struct AddAccountView: View {
             Section {
                 AssppScreenHeader(
                     eyebrow: "SECURE CONNECTION",
-                    title: "Add account",
-                    subtitle: "Use your Apple Account only to retrieve App Store downloads.",
+                    title: "Sign in",
+                    subtitle: "Connect once to download your apps.",
                     symbol: "person.crop.circle.badge.plus"
                 )
             }
@@ -73,7 +73,7 @@ struct AddAccountView: View {
                     .disabled(password.isEmpty)
                 }
             } footer: {
-                Text("Your account is saved in your Keychain and will be synced across devices with the same iCloud account signed in.")
+                Text("Your sign-in is stored securely in Keychain.")
             }
             if codeRequired {
                 Section {
@@ -123,7 +123,7 @@ struct AddAccountView: View {
                         throw error
                     }
                 } label: {
-                    Text("Authenticate")
+                    Text("Sign In")
                 }
                 .disabledWhenLoading()
                 .disabled(email.isEmpty || password.isEmpty)
