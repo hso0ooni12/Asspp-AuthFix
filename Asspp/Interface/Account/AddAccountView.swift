@@ -21,6 +21,9 @@ struct AddAccountView: View {
     @State private var code: String = ""
 
     @State private var authenticator: ApplePackage.Authenticator?
+    // Start public Apple SAP setup when the user begins entering an email.
+    // Reuse this actor during the first submit and any subsequent 2FA prompt.
+    @State private var setupTask: Task<ApplePackage.Authenticator, Error>?
     @State private var isAuthenticating = false
     @State private var error: Error?
 
@@ -96,6 +99,9 @@ struct AddAccountView: View {
                         let session: ApplePackage.Authenticator
                         if let authenticator {
                             session = authenticator
+                        } else if let setupTask {
+                            session = try await setupTask.value
+                            authenticator = session
                         } else {
                             session = try await ApplePackage.Authenticator()
                             authenticator = session
@@ -110,6 +116,7 @@ struct AddAccountView: View {
                             codeRequired = true
                         } else if error is ApplePackage.AuthenticationDeliveryError || error is ApplePackage.AuthenticationConnectionError {
                             authenticator = nil
+                            setupTask = nil
                             codeRequired = false
                             code = ""
                         }
@@ -137,13 +144,26 @@ struct AddAccountView: View {
         .background(AssppTheme.background)
         .tint(AssppTheme.accent)
         .animation(.spring, value: codeRequired)
-        .onChange(of: email) { resetAuthentication() }
-        .onChange(of: password) { resetAuthentication() }
+        .onChange(of: email) { _, value in
+            resetAuthentication()
+            if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                prepareSecureConnection()
+            }
+        }
+        .onChange(of: password) { _, _ in resetAuthentication() }
+        .onDisappear { setupTask?.cancel() }
         #if os(iOS)
             .listStyle(.insetGrouped)
             .navigationBarTitleDisplayMode(.inline)
         #endif
             .navigationTitle("Add Account")
+    }
+
+    private func prepareSecureConnection() {
+        guard setupTask == nil else { return }
+        setupTask = Task(priority: .userInitiated) {
+            try await ApplePackage.Authenticator()
+        }
     }
 
     private func resetAuthentication() {
