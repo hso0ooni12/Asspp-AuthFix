@@ -4,8 +4,26 @@ cd "$(dirname "$0")/../.."
 python3 Resources/AuthFix/prepare.py
 
 mkdir -p artifacts .build-authfix
-swift test --package-path Vendor/ApplePackage --scratch-path .build-authfix/PackageTests \
-  --filter SAPSetupTransportTests 2>&1 | tee artifacts/transport-tests.log
+# SwiftPM also resolves GitHub-hosted binary dependencies during this test.
+# A transient 504 here must be retried before the Xcode build is reached.
+transport_tests_ok=0
+for test_attempt in 1 2 3 4 5 6; do
+  echo "Compiling and running transport tests (attempt ${test_attempt}/6)"
+  if swift test --package-path Vendor/ApplePackage --scratch-path .build-authfix/PackageTests \
+    --filter SAPSetupTransportTests 2>&1 | tee artifacts/transport-tests.log; then
+    transport_tests_ok=1
+    break
+  fi
+  if ! grep -Eq 'badResponseStatusCode\(50[234]\)|failed downloading|Connection reset by peer|Could not resolve package' artifacts/transport-tests.log; then
+    echo '::error::Transport tests failed for a reason other than transient package downloads.'
+    break
+  fi
+  if [[ "$test_attempt" -lt 6 ]]; then sleep "$((test_attempt * 8))"; fi
+done
+if [[ "$transport_tests_ok" -ne 1 ]]; then
+  echo '::error::Transport tests or dependency resolution failed.'
+  exit 1
+fi
 if ASSPP_AUTHFIX_SETUP_PROBE=1 swift test --package-path Vendor/ApplePackage \
   --scratch-path .build-authfix/PackageTests --skip-build \
   --filter SAPSetupTransportTests.testLiveSetupWithoutAppleAccount 2>&1 | tee artifacts/sap-setup-probe.log; then
