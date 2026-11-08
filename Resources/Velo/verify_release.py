@@ -7,9 +7,9 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "4.8.1"
-BUILD = "2026110823"
-IPA_NAME = "Velo-R22-Batch-Stable-unsigned.ipa"
+VERSION = "4.8.2"
+BUILD = "2026110824"
+IPA_NAME = "Velo-R23-OneHelperBatch-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()
@@ -36,7 +36,11 @@ def validate_sources():
     downloads_view = (ROOT / "Asspp/Interface/Download/DownloadView.swift").read_text()
     assert "selectedIDs" in downloads_view and "prepareBatch" in downloads_view
     decryptor = (ROOT / "Asspp/Interface/Download/PackageView.swift").read_text()
-    assert "FairPlayedBatchArchive" in decryptor and "compressionMethod: .none" in decryptor
+    assert "FairPlayedBatchArchive" in decryptor and "prepareBatch(inputs:" in decryptor
+    assert "Velo-Batch-" in decryptor
+    fairplayed_patch = (ROOT / "Resources/FairPlayed/auto-export-and-share.patch").read_text()
+    assert "Velo-Decrypted-Batch.zip" in fairplayed_patch
+    assert "successfulIPAs.count != expected" in fairplayed_patch
     auth = (ROOT / "Asspp/Interface/Account/AddAccountView.swift").read_text()
     assert "prepareSecureConnection" in auth and "setupTask.value" in auth
     service = (ROOT / "Asspp/Backend/AppStore/StoreDownloadService.swift").read_text()
@@ -84,7 +88,8 @@ def validate_archive():
         guardedDeletion=True,
         concurrentDownloads="Two byte transfers, serialized metadata per account",
         progressInSearch=True,
-        bulkExport="ZIP of unsigned FairPlayed helpers, not decrypted IPAs",
+        bulkExport="One unsigned FairPlayed helper for multiple apps; one decrypted ZIP after opening",
+        batchVerification="All selected apps must decrypt completely before sharing group ZIP",
         deviceTesting="Deletion and multiple iPhone downloads require device verification",
     )
     path.write_text(json.dumps(report, indent=2) + "\n")

@@ -1,8 +1,7 @@
 diff --git a/FairPlayed/FairPlayed/main.m b/FairPlayed/FairPlayed/main.m
-index 0c7a7df..5a68b0e 100644
 --- a/FairPlayed/FairPlayed/main.m
 +++ b/FairPlayed/FairPlayed/main.m
-@@ -40,7 +40,7 @@ static NSString *WorkDir(void) {
+@@ -40,7 +40,7 @@
  + (NSString *)processIPA:(NSString *)ipaPath;
  + (void)processAllDocumentsIPAs;
  + (void)embeddedExperiment;
@@ -11,7 +10,7 @@ index 0c7a7df..5a68b0e 100644
  + (void)copyTree:(NSString *)src to:(NSString *)dst skipped:(NSMutableArray *)skipped;
  @end
  
-@@ -408,9 +408,10 @@ static NSString *WorkDir(void) {
+@@ -408,13 +408,23 @@
  // Full export: EmbeddedPayload/<name>/ holds a complete copy of <name>.app (placed there by embed_ipa.sh).
  // Every encrypted Mach-O is decrypted from its in-bundle path (where fairplayd can read it and its SC_Info),
  // written into a container copy of the app, and the result is zipped into Documents/Decrypted/<name>-decrypted.ipa.
@@ -19,11 +18,26 @@ index 0c7a7df..5a68b0e 100644
 ++ (NSString *)embeddedExport {
      NSFileManager *fm = NSFileManager.defaultManager;
      NSString *root = [self embeddedRoot];
-+    NSString *successfulIPA = nil;
-     for (NSString *name in [fm contentsOfDirectoryAtPath:root error:nil]) @autoreleasepool {
+-    for (NSString *name in [fm contentsOfDirectoryAtPath:root error:nil]) @autoreleasepool {
++    NSArray<NSString *> *names = [fm contentsOfDirectoryAtPath:root error:nil] ?: @[];
++    NSMutableArray<NSString *> *successfulIPAs = [NSMutableArray array];
++    NSUInteger expected = 0;
++    BOOL hadFailure = NO;
++    for (NSString *name in names) @autoreleasepool {
          NSString *src = [root stringByAppendingPathComponent:name];
          NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:[src stringByAppendingPathComponent:@"Info.plist"]];
-@@ -426,23 +427,56 @@ static NSString *WorkDir(void) {
+-        if (!info) { FPLog(@"[%@] no Info.plist; not a full app copy, skipping export", name); continue; }
++        if (!info) {
++            FPLog(@"[%@] no Info.plist; batch incomplete", name);
++            hadFailure = YES;
++            continue;
++        }
++        expected++;
++        FPLog(@"FP_BATCH %lu %lu", (unsigned long)expected, (unsigned long)names.count);
+         FPLog(@"=== export %@ (%@ %@) ===", name, info[@"CFBundleIdentifier"], info[@"CFBundleShortVersionString"]);
+         NSString *work = [WorkDir() stringByAppendingPathComponent:[@"export-" stringByAppendingString:name]];
+         NSString *appDst = [[work stringByAppendingPathComponent:@"Payload"] stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"app"]];
+@@ -426,15 +436,47 @@
          FPLog(@"copied bundle; skipped %lu item(s): %@", (unsigned long)skipped.count, [skipped componentsJoinedByString:@", "]);
          int dec = 0, plain = 0, fail = 0;
          NSMutableArray *failed = [NSMutableArray array];
@@ -58,32 +72,70 @@ index 0c7a7df..5a68b0e 100644
          NSString *outDir = [DocsDir() stringByAppendingPathComponent:@"Decrypted"];
          [fm createDirectoryAtPath:outDir withIntermediateDirectories:YES attributes:nil error:nil];
 -        NSString *ipa = [outDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@%@.ipa", name, fail ? @"-PARTIAL" : @"-decrypted"]];
--        [fm removeItemAtPath:ipa error:nil];
 +        // A previous version could leave a PARTIAL IPA beside a successful export.
 +        // Never offer an incomplete archive as though it were ready for signing.
 +        NSString *oldPartial = [outDir stringByAppendingPathComponent:[name stringByAppendingString:@"-PARTIAL.ipa"]];
 +        [fm removeItemAtPath:oldPartial error:nil];
 +        if (fail) {
++            hadFailure = YES;
 +            [fm removeItemAtPath:work error:nil];
 +            FPLog(@"=== %@: %d decrypted, %d not encrypted, %d failed (%@); no IPA exported ===",
 +                  name, dec, plain, fail, [failed componentsJoinedByString:@", "]);
 +            continue;
 +        }
 +        NSString *ipa = [outDir stringByAppendingPathComponent:[name stringByAppendingString:@"-decrypted.ipa"]];
-+        [fm removeItemAtPath:ipa error:nil];
+         [fm removeItemAtPath:ipa error:nil];
          char zerr[512] = {0};
          int zr = zip_create_from_dir(work.fileSystemRepresentation, ipa.fileSystemRepresentation, zerr, sizeof zerr);
-         [fm removeItemAtPath:work error:nil];
+@@ -442,7 +484,47 @@
          FPLog(@"=== %@: %d decrypted, %d not encrypted, %d failed%@; %@ ===", name, dec, plain, fail,
                fail ? [NSString stringWithFormat:@" (%@)", [failed componentsJoinedByString:@", "]] : @"",
                zr == 0 ? [@"wrote " stringByAppendingString:ipa.lastPathComponent] : [NSString stringWithFormat:@"zip failed: %s", zerr]);
-+        if (zr == 0) successfulIPA = ipa;
++        if (zr == 0) [successfulIPAs addObject:ipa];
++        else hadFailure = YES;
++    }
++    // A group is successful only when *every* embedded app has a verified,
++    // complete decrypted IPA. Never share a ZIP that quietly omits an app.
++    if (hadFailure || expected == 0 || successfulIPAs.count != expected) {
++        FPLog(@"FP_BATCH FAILED: %lu/%lu complete; no group archive exported",
++              (unsigned long)successfulIPAs.count, (unsigned long)expected);
++        return nil;
++    }
++    if (successfulIPAs.count == 1) return successfulIPAs.firstObject;
++
++    NSString *stage = [WorkDir() stringByAppendingPathComponent:@"Velo-Batch-Stage"];
++    [fm removeItemAtPath:stage error:nil];
++    if (![fm createDirectoryAtPath:stage withIntermediateDirectories:YES attributes:nil error:nil]) {
++        FPLog(@"FP_BATCH cannot create staging directory");
++        return nil;
++    }
++    for (NSString *ipa in successfulIPAs) {
++        NSString *dest = [stage stringByAppendingPathComponent:ipa.lastPathComponent];
++        if (![fm copyItemAtPath:ipa toPath:dest error:nil]) {
++            [fm removeItemAtPath:stage error:nil];
++            FPLog(@"FP_BATCH cannot stage %@", ipa.lastPathComponent);
++            return nil;
++        }
      }
-+    return successfulIPA;
++    NSString *archive = [DocsDir() stringByAppendingPathComponent:@"Velo-Decrypted-Batch.zip"];
++    [fm removeItemAtPath:archive error:nil];
++    char zipError[512] = {0};
++    int zipResult = zip_create_from_dir(stage.fileSystemRepresentation,
++                                         archive.fileSystemRepresentation,
++                                         zipError, sizeof zipError);
++    [fm removeItemAtPath:stage error:nil];
++    if (zipResult != 0) {
++        [fm removeItemAtPath:archive error:nil];
++        FPLog(@"FP_BATCH archive failed: %s", zipError);
++        return nil;
++    }
++    FPLog(@"FP_BATCH complete: %lu apps -> %@", (unsigned long)successfulIPAs.count,
++          archive.lastPathComponent);
++    return archive;
  }
  
  + (void)processAllDocumentsIPAs {
-@@ -479,28 +513,121 @@ static NSString *WorkDir(void) {
+@@ -479,28 +561,125 @@
  @interface FPViewController : UIViewController <UIDocumentPickerDelegate>
  @property (nonatomic, strong) UITextView *textView;
  @property (nonatomic, strong) NSString *lastIPA;
@@ -93,6 +145,8 @@ index 0c7a7df..5a68b0e 100644
 +@property (nonatomic, strong) UILabel *statusLabel;
 +@property (nonatomic, strong) UIProgressView *progressView;
 +@property (nonatomic, strong) UIButton *shareButton;
++@property (nonatomic, assign) NSUInteger currentAppIndex;
++@property (nonatomic, assign) NSUInteger totalAppCount;
  @end
  
  @implementation FPViewController
@@ -144,7 +198,9 @@ index 0c7a7df..5a68b0e 100644
 +        [root addArrangedSubview:iconHolder];
 +
 +        UILabel *title = [[UILabel alloc] init];
-+        title.text = @"FairPlayed";
++        NSString *payloadRoot = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"EmbeddedPayload"];
++        NSUInteger embeddedCount = [NSFileManager.defaultManager contentsOfDirectoryAtPath:payloadRoot error:nil].count;
++        title.text = embeddedCount > 1 ? @"FairPlayed Batch" : @"FairPlayed";
 +        title.textAlignment = NSTextAlignmentCenter;
 +        title.font = [UIFont systemFontOfSize:30 weight:UIFontWeightBold];
 +        title.textColor = UIColor.whiteColor;
@@ -172,7 +228,7 @@ index 0c7a7df..5a68b0e 100644
 +        [root addArrangedSubview:self.progressView];
 +
 +        self.shareButton = [UIButton buttonWithConfiguration:UIButtonConfiguration.filledButtonConfiguration primaryAction:nil];
-+        [self.shareButton setTitle:@"Share Decrypted IPA" forState:UIControlStateNormal];
++        [self.shareButton setTitle:@"Share Decrypted Files" forState:UIControlStateNormal];
 +        [self.shareButton addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];
 +        self.shareButton.tag = 3;
 +        self.shareButton.enabled = NO;
@@ -218,17 +274,35 @@ index 0c7a7df..5a68b0e 100644
      root.translatesAutoresizingMaskIntoConstraints = NO;
      [self.view addSubview:root];
      UILayoutGuide *g = self.view.safeAreaLayoutGuide;
-@@ -515,12 +642,81 @@ static NSString *WorkDir(void) {
+@@ -515,12 +694,100 @@
          dispatch_async(dispatch_get_main_queue(), ^{
              UITextView *tv = ws.textView;
              tv.text = [tv.text stringByAppendingFormat:@"%@\n", s];
 -            [tv scrollRangeToVisible:NSMakeRange(tv.text.length, 0)];
 +            if (!tv.hidden) [tv scrollRangeToVisible:NSMakeRange(tv.text.length, 0)];
++            if ([s hasPrefix:@"FP_BATCH "] && ws.progressView) {
++                int app = 0, totalApps = 0;
++                if (sscanf(s.UTF8String, "FP_BATCH %d %d", &app, &totalApps) == 2 &&
++                    app > 0 && totalApps > 0) {
++                    ws.currentAppIndex = (NSUInteger)app;
++                    ws.totalAppCount = (NSUInteger)totalApps;
++                    ws.progressView.progress = (float)(app - 1) / (float)totalApps;
++                    ws.statusLabel.text = [NSString stringWithFormat:@"App %d of %d", app, totalApps];
++                }
++            }
 +            if ([s hasPrefix:@"FP_PROGRESS "] && ws.progressView) {
 +                int current = 0, total = 0;
 +                if (sscanf(s.UTF8String, "FP_PROGRESS %d %d", &current, &total) == 2 && total > 0) {
-+                    ws.progressView.progress = (float)current / (float)total;
-+                    ws.statusLabel.text = [NSString stringWithFormat:@"Decrypting %d of %d components", current, total];
++                    float ratio = (float)current / (float)total;
++                    if (ws.totalAppCount > 1 && ws.currentAppIndex > 0) {
++                        ws.progressView.progress = ((float)(ws.currentAppIndex - 1) + ratio) /
++                                                    (float)ws.totalAppCount;
++                        ws.statusLabel.text = [NSString stringWithFormat:@"App %lu/%lu · component %d/%d",
++                            (unsigned long)ws.currentAppIndex, (unsigned long)ws.totalAppCount, current, total];
++                    } else {
++                        ws.progressView.progress = ratio;
++                        ws.statusLabel.text = [NSString stringWithFormat:@"Decrypting %d of %d components", current, total];
++                    }
 +                }
 +            }
          });
@@ -252,10 +326,11 @@ index 0c7a7df..5a68b0e 100644
 +- (void)exportEmbeddedAndShare {
 +    if (self.isExporting) return;
 +    self.isExporting = YES;
++    self.lastIPA = nil;
 +    self.shareButton.enabled = NO;
 +    self.progressView.progress = 0;
 +    self.statusLabel.text = @"Starting decryption...";
-+    FPLog(@"=== Auto export started; waiting for a fully decrypted IPA ===");
++    FPLog(@"=== Auto export started; waiting for verified decrypted files ===");
 +    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 +        [FPRunner logEnvironment];
 +        NSString *ipa = [FPRunner embeddedExport];
@@ -301,7 +376,7 @@ index 0c7a7df..5a68b0e 100644
  - (void)tap:(UIButton *)b {
      switch (b.tag) {
          case 0: {
-@@ -532,18 +728,9 @@ static NSString *WorkDir(void) {
+@@ -532,18 +799,9 @@
              break;
          }
          case 1: [self background:^{ [FPRunner processAllDocumentsIPAs]; }]; break;
@@ -323,3 +398,4 @@ index 0c7a7df..5a68b0e 100644
      }
  }
  
+

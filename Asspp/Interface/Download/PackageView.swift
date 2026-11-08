@@ -351,9 +351,9 @@ final class DecryptionCenter {
         }
     }
 
-    /// Multi-select prepares the same tested helper as the single-item path.
-    /// The ZIP contains unsigned helpers, NOT already decrypted app binaries.
-    /// Each helper must be signed/installed and opened to produce its result.
+    /// One signed FairPlayed helper can hold several complete app bundles.
+    /// When launched, its embedded export loops over every app and shares a ZIP
+    /// only if all Mach-O components in every app decrypted and verified.
     func prepareBatch(_ manifests: [PackageManifest]) {
         let selected = manifests.filter(\.completed)
         guard !selected.isEmpty, !isPreparingBatch else { return }
@@ -372,8 +372,7 @@ final class DecryptionCenter {
                 downloadedIPA: manifest.targetLocation,
                 bundleID: manifest.package.software.bundleID,
                 name: manifest.package.software.name,
-                version: manifest.package.software.version,
-                existingHelper: preparedURL(for: manifest)
+                version: manifest.package.software.version
             )
         }
         Task {
@@ -385,12 +384,9 @@ final class DecryptionCenter {
                         }
                     }
                 }.value
-                for (id, file) in result.helpers {
-                    UserDefaults.standard.set(file.path, forKey: "Asspp.PreparedFairPlayed.\(id.uuidString)")
-                    statuses[id] = .ready
-                }
+                for input in inputs { statuses.removeValue(forKey: input.id) }
                 batchCompleted = batchTotal
-                sharePackage = PreparedDecryptionPackage(url: result.archive)
+                sharePackage = PreparedDecryptionPackage(url: result)
             } catch {
                 batchError = error.localizedDescription
                 for input in inputs { statuses[input.id] = .failed(error.localizedDescription) }
@@ -434,62 +430,19 @@ final class DecryptionCenter {
     }
 }
 
-/// Batch export stays entirely in Velo's document container and uses hard
-/// links while packing so each large helper IPA is not copied a third time.
-private enum FairPlayedBatchArchive {
+/// Value-only inputs cross the detached task boundary without sharing live
+/// @Observable PackageManifest state.
+fileprivate enum FairPlayedBatchArchive {
     struct Input: Sendable {
         let id: UUID
         let downloadedIPA: URL
         let bundleID: String
         let name: String
         let version: String
-        let existingHelper: URL?
     }
 
-    struct Result: Sendable {
-        let archive: URL
-        let helpers: [UUID: URL]
-    }
-
-    static func create(inputs: [Input], progress: @escaping @Sendable (Int) -> Void) throws -> Result {
-        let fm = FileManager.default
-        let base = documentsDirectory.appendingPathComponent("FairPlayed", isDirectory: true)
-        let root = base.appendingPathComponent("BatchBuild-" + UUID().uuidString, isDirectory: true)
-        let stage = root.appendingPathComponent("FairPlayed-Helpers", isDirectory: true)
-        try fm.createDirectory(at: stage, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: root) }
-        var prepared: [UUID: URL] = [:]
-        for (index, input) in inputs.enumerated() {
-            try Task.checkCancellation()
-            let helper: URL
-            if let existing = input.existingHelper,
-               fm.fileExists(atPath: existing.path) {
-                helper = existing
-            } else {
-                helper = try FairPlayedHelper.prepare(
-                    downloadedIPA: input.downloadedIPA,
-                    expectedBundleID: input.bundleID,
-                    name: input.name,
-                    version: input.version
-                )
-            }
-            prepared[input.id] = helper
-            let destination = stage.appendingPathComponent(helper.lastPathComponent)
-            do {
-                try fm.linkItem(at: helper, to: destination)
-            } catch {
-                try fm.copyItem(at: helper, to: destination)
-            }
-            progress(index + 1)
-        }
-        let exports = base.appendingPathComponent("Exports", isDirectory: true)
-        try fm.createDirectory(at: exports, withIntermediateDirectories: true)
-        let output = exports.appendingPathComponent("Velo-FairPlayed-Helpers-" +
-            String(UUID().uuidString.prefix(8)) + ".zip")
-        // IPA is already compressed; storing without recompression is faster.
-        try fm.zipItem(at: stage, to: output, shouldKeepParent: false,
-                       compressionMethod: .none)
-        return Result(archive: output, helpers: prepared)
+    static func create(inputs: [Input], progress: @escaping @Sendable (Int) -> Void) throws -> URL {
+        try FairPlayedHelper.prepareBatch(inputs: inputs, progress: progress)
     }
 }
 
@@ -579,6 +532,75 @@ enum FairPlayedHelper {
         try fm.zipItem(at: staged, to: output, shouldKeepParent: false, compressionMethod: .deflate)
         let packed = try Archive(url: output, accessMode: .read)
         guard packed.contains(where: { $0.path.contains("/EmbeddedPayload/") }) else {
+            try? fm.removeItem(at: output)
+            throw PreparationError.emptyPayload
+        }
+        return output
+    }
+
+    /// Batch version of the known-good single-app assembly. The helper itself
+    /// contains every selected app as a resource without nested .app suffixes.
+    /// FairPlayed's multi-app export then performs all decryptions on-device.
+    fileprivate static func prepareBatch(
+        inputs: [FairPlayedBatchArchive.Input],
+        progress: @escaping @Sendable (Int) -> Void
+    ) throws -> URL {
+        guard inputs.count > 1,
+              let shell = Bundle.main.url(forResource: "FairPlayed-shell", withExtension: "zip")
+        else { throw PreparationError.missingShell }
+        let root = fm.temporaryDirectory.appendingPathComponent("FairPlayedBatch-" + UUID().uuidString,
+                                                                  isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        let staged = root.appendingPathComponent("Staged", isDirectory: true)
+        try validateArchive(shell)
+        try fm.unzipItem(at: shell, to: staged)
+        let helper = staged.appendingPathComponent("FairPlayed.app", isDirectory: true)
+        guard fm.fileExists(atPath: helper.appendingPathComponent("FairPlayed").path),
+              (try info(at: helper)["CFBundleExecutable"] as? String) == "FairPlayed"
+        else { throw PreparationError.invalidShell }
+        try configureHelper(at: helper, targetName: "\(inputs.count) Apps")
+        let embedded = helper.appendingPathComponent("EmbeddedPayload", isDirectory: true)
+        if fm.fileExists(atPath: embedded.path) { try fm.removeItem(at: embedded) }
+        try fm.createDirectory(at: embedded, withIntermediateDirectories: true)
+
+        for (index, entry) in inputs.enumerated() {
+            try Task.checkCancellation()
+            guard fm.fileExists(atPath: entry.downloadedIPA.path) else {
+                throw PreparationError.missingDownload
+            }
+            try validateArchive(entry.downloadedIPA)
+            let unpacked = root.appendingPathComponent("Input-\(index)", isDirectory: true)
+            try fm.unzipItem(at: entry.downloadedIPA, to: unpacked)
+            let target = try findApp(in: unpacked)
+            guard (try info(at: target)["CFBundleIdentifier"] as? String) == entry.bundleID else {
+                throw PreparationError.bundleMismatch
+            }
+            let destination = embedded.appendingPathComponent(
+                safePart(entry.name) + "-" + safePart(entry.version) + "-" +
+                    String(entry.id.uuidString.prefix(8)), isDirectory: true
+            )
+            try fm.copyItem(at: target, to: destination)
+            let watch = destination.appendingPathComponent("Watch", isDirectory: true)
+            if fm.fileExists(atPath: watch.path) { try fm.removeItem(at: watch) }
+            try replicateSINF(in: destination)
+            try fm.removeItem(at: unpacked)
+            progress(index + 1)
+        }
+        let payload = staged.appendingPathComponent("Payload", isDirectory: true)
+        try fm.createDirectory(at: payload, withIntermediateDirectories: true)
+        try fm.moveItem(at: helper,
+                        to: payload.appendingPathComponent("FairPlayed.app", isDirectory: true))
+        let outputDir = base.appendingPathComponent("Prepared", isDirectory: true)
+        try fm.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        let output = outputDir.appendingPathComponent(
+            "Velo-Batch-\(inputs.count)-FairPlayed-" + String(UUID().uuidString.prefix(8)) + ".ipa"
+        )
+        try fm.zipItem(at: staged, to: output, shouldKeepParent: false,
+                       compressionMethod: .deflate)
+        let archived = try Archive(url: output, accessMode: .read)
+        let embeddedCount = archived.filter { $0.path.contains("/EmbeddedPayload/") &&
+            $0.path.hasSuffix("/Info.plist") }.count
+        guard embeddedCount == inputs.count else {
             try? fm.removeItem(at: output)
             throw PreparationError.emptyPayload
         }

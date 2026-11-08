@@ -65,13 +65,13 @@ struct DownloadView: View {
                             selectedIDs.removeAll()
                         } label: {
                             Label(selectedIDs.count == 1 ? "Prepare Decryptor" :
-                                    "Prepare \(selectedIDs.count) Decryptors as ZIP",
+                                    "Prepare One Decryptor (\(selectedIDs.count) Apps)",
                                   systemImage: "lock.open.fill")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(selectedIDs.isEmpty || decryptor.isPreparingBatch)
-                        Text("For multiple apps, Velo exports one ZIP of FairPlayed helpers to sign. Each helper decrypts its app after installation.")
+                        Text("Velo builds one FairPlayed IPA for all selected apps. Sign it once; opening it decrypts every app and shares one ZIP of decrypted IPAs.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -82,12 +82,12 @@ struct DownloadView: View {
             if decryptor.isPreparingBatch {
                 AssppCard {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Preparing \(decryptor.batchCompleted) of \(decryptor.batchTotal)")
+                        Text("Embedding \(decryptor.batchCompleted) of \(decryptor.batchTotal) apps")
                             .font(.subheadline.bold())
                         ProgressView(value: Double(decryptor.batchCompleted),
                                      total: Double(max(decryptor.batchTotal, 1)))
                             .tint(AssppTheme.accent)
-                        Text("Keep Velo open while the helper IPAs are packaged.")
+                        Text("Keep Velo open while the single helper is packaged.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
