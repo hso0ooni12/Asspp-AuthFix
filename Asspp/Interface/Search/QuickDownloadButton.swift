@@ -54,6 +54,9 @@ struct QuickDownloadButton: View {
             Button("Cancel", role: .cancel) {}
         }
         .alert("Download", isPresented: $showingError) {
+            if let selectedAccount {
+                Button("Retry") { begin(accountID: selectedAccount) }
+            }
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage)
@@ -101,7 +104,10 @@ struct QuickDownloadButton: View {
                 if case ApplePackageError.licenseRequired = error, package.software.price == 0 {
                     needsLicense = true
                 } else {
-                    errorMessage = error.localizedDescription
+                    let networkError = error as NSError
+                    errorMessage = networkError.domain == NSURLErrorDomain && networkError.code == NSURLErrorTimedOut
+                        ? "The App Store download request timed out. Please retry. If this happens again, check Settings > Logs for the failed endpoint."
+                        : error.localizedDescription
                     showingError = true
                 }
             }
