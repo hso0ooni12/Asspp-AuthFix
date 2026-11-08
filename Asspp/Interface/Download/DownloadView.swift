@@ -24,7 +24,7 @@ struct DownloadView: View {
                 AssppScreenHeader(
                     eyebrow: "ASS•PP  /  IPA MANAGER",
                     title: "Downloads",
-                    subtitle: "Your apps, decryption and signing — together in one place.",
+                    subtitle: "Your downloads and FairPlayed helpers in one place.",
                     symbol: "arrow.down.to.line.compact"
                 )
                 HStack(spacing: 12) {
@@ -110,7 +110,7 @@ private struct PackageManifestRow: View {
     @State private var vm = Downloads.this
     @State private var decryptor = DecryptionCenter.shared
     @State private var showDeleteConfirmation = false
-    @State private var showSigningError = false
+    @State private var showPreparationError = false
     @State private var showDetails = false
     @State private var shareOriginal: PreparedDecryptionPackage?
 
@@ -131,12 +131,9 @@ private struct PackageManifestRow: View {
                     case .ready:
                         Label("Ready to Sign", systemImage: "checkmark.seal.fill")
                             .foregroundStyle(.green)
-                    case .signed:
-                        Label("Ready to Install", systemImage: "checkmark.shield.fill")
-                            .foregroundStyle(.green)
                     case let .failed(message):
                         Button {
-                            showSigningError = true
+                            showPreparationError = true
                         } label: {
                             Label(message, systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.red)
@@ -164,16 +161,6 @@ private struct PackageManifestRow: View {
                         .buttonStyle(.borderedProminent)
                         .tint(AssppTheme.accent)
                         .disabled(decryptor.status(for: manifest) == .preparing)
-
-                        if decryptor.signedURL(for: manifest) != nil {
-                            Button {
-                                decryptor.install(manifest)
-                            } label: {
-                                Label("Install", systemImage: "arrow.down.app.fill")
-                                    .font(.subheadline.weight(.semibold))
-                            }
-                            .buttonStyle(.bordered)
-                        }
                     }
                 }
             }
@@ -192,14 +179,6 @@ private struct PackageManifestRow: View {
                         decryptor.shareExisting(manifest)
                     } label: {
                         Label("Share Prepared IPA", systemImage: "square.and.arrow.up")
-                    }
-                }
-
-                if decryptor.signedURL(for: manifest) != nil {
-                    Button {
-                        decryptor.install(manifest)
-                    } label: {
-                        Label("Install Signed FairPlayed", systemImage: "square.and.arrow.down")
                     }
                 }
 
@@ -255,13 +234,13 @@ private struct PackageManifestRow: View {
         } message: {
             Text("The downloaded IPA will be removed. A previously prepared FairPlayed helper is retained.")
         }
-        .alert("Signing Details", isPresented: $showSigningError) {
+        .alert("Preparation Details", isPresented: $showPreparationError) {
             Button("OK", role: .cancel) {}
         } message: {
             if case let .failed(message) = decryptor.status(for: manifest) {
                 Text(message)
             } else {
-                Text("No signing error is currently recorded.")
+                Text("No preparation error is currently recorded.")
             }
         }
         .sheet(item: $shareOriginal) { item in

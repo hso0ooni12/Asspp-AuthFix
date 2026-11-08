@@ -60,15 +60,6 @@ if [[ -n "${R3_KBSYNC_ARCHIVE:-}" ]]; then
   extra_xcodebuild_flags=(OTHER_LDFLAGS="${native_link_flags}")
 fi
 
-# Native R12 signing library for the FairPlayed helper, linked directly into
-# the main iOS executable (never launched as a separate process).
-if [[ -n "${R12_SIGNER_ARCHIVE:-}" ]]; then
-  [[ -s "${R12_SIGNER_ARCHIVE}" ]] || { echo "Missing R12 signer archive"; exit 1; }
-  [[ -s "${R12_OPENSSL_DIR}/libcrypto.a" ]] || { echo "Missing R12 OpenSSL archive"; exit 1; }
-  native_link_flags="${native_link_flags:-} -force_load ${R12_SIGNER_ARCHIVE} -L${R12_OPENSSL_DIR} -lcrypto -lssl -lc++ -lz"
-  extra_xcodebuild_flags=(OTHER_LDFLAGS="${native_link_flags}")
-fi
-
 # Some upstream SPM binary artifacts are hosted on GitHub Releases and can
 # intermittently return HTTP 504. Keep the same checked-out source package
 # directory across attempts so already downloaded dependencies are reused.

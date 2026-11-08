@@ -132,18 +132,7 @@ struct PackageView: View {
 
                         switch decryptor.status(for: pkg) {
                         case .preparing:
-                            ProgressView("Preparing and signing FairPlayed...")
-                        case .signed:
-                            Button {
-                                decryptor.install(pkg)
-                            } label: {
-                                Label("Install Signed FairPlayed", systemImage: "square.and.arrow.down.fill")
-                            }
-                            Button {
-                                decryptor.shareExisting(pkg)
-                            } label: {
-                                Label("Share Signed IPA", systemImage: "square.and.arrow.up")
-                            }
+                            ProgressView("Preparing FairPlayed...")
                         case .ready:
                             Button {
                                 decryptor.shareExisting(pkg)
@@ -158,7 +147,7 @@ struct PackageView: View {
                     } header: {
                         Text("FairPlay Decryption")
                     } footer: {
-                        Text("With a certificate and profile saved in Settings, Asspp prepares and signs the FairPlayed helper on this iPhone, then offers Install. If no signing identity is configured, you can still share the unsigned helper for external signing. Opening FairPlayed automatically decrypts and shares a complete IPA; an incomplete export is never shared.")
+                        Text("Asspp prepares a FairPlayed IPA containing this download. Sign and install that IPA using your signing app. Opening it starts decryption automatically and shares the complete result. Signing Asspp itself does not remove this separate requirement.")
                     }
                 #endif
 
@@ -267,11 +256,6 @@ struct PreparedDecryptionPackage: Identifiable {
     var id: String { url.path }
 }
 
-struct PendingHelperInstallation {
-    let manifest: PackageManifest
-    let bundleID: String
-}
-
 struct AssppActivityShare: UIViewControllerRepresentable {
     let items: [Any]
 
@@ -283,7 +267,7 @@ struct AssppActivityShare: UIViewControllerRepresentable {
 }
 
 enum DecryptionPreparationStatus: Equatable {
-    case idle, preparing, ready, signed, failed(String)
+    case idle, preparing, ready, failed(String)
 }
 
 /// Shared, main-actor coordination prevents duplicate helper exports from the
@@ -295,17 +279,17 @@ final class DecryptionCenter {
 
     var statuses: [UUID: DecryptionPreparationStatus] = [:]
     var sharePackage: PreparedDecryptionPackage?
-    var installer: Installer?
-    var pendingInstall: PendingHelperInstallation?
 
     @ObservationIgnored private var running: Set<UUID> = []
 
-    private init() {}
+    private init() {
+        RetiredSigningCleanup.run()
+    }
 
     func status(for manifest: PackageManifest) -> DecryptionPreparationStatus {
         if let stored = statuses[manifest.id] { return stored }
         guard preparedURL(for: manifest) != nil else { return .idle }
-        return signedURL(for: manifest) != nil ? .signed : .ready
+        return .ready
     }
 
     func preparedURL(for manifest: PackageManifest) -> URL? {
@@ -322,90 +306,6 @@ final class DecryptionCenter {
         sharePackage = PreparedDecryptionPackage(url: file)
     }
 
-    func signedURL(for manifest: PackageManifest) -> URL? {
-        guard let path = UserDefaults.standard.string(forKey: "Asspp.SignedFairPlayed.\(manifest.id.uuidString)") else { return nil }
-        let url = URL(fileURLWithPath: path)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
-    }
-
-    func install(_ manifest: PackageManifest) {
-        guard let file = signedURL(for: manifest) else {
-            statuses[manifest.id] = .failed("No signed IPA found. Prepare Decrypt again.")
-            return
-        }
-        do {
-            let identifier = try Self.helperBundleID(in: file)
-            if identifier != "com.thehacker.ipastudio.helper" {
-                // An exact provisioning profile might be assigned to an app
-                // already installed on this iPhone. Never replace that app
-                // without an explicit choice from the user.
-                pendingInstall = PendingHelperInstallation(manifest: manifest, bundleID: identifier)
-                return
-            }
-            startInstall(manifest, file: file, bundleID: identifier)
-        } catch {
-            statuses[manifest.id] = .failed("Cannot validate the signed helper: \(error.localizedDescription)")
-        }
-    }
-
-    func confirmPendingInstall() {
-        guard let request = pendingInstall else { return }
-        pendingInstall = nil
-        guard let file = signedURL(for: request.manifest) else {
-            statuses[request.manifest.id] = .failed("Signed IPA not found. Prepare it again.")
-            return
-        }
-        do {
-            guard try Self.helperBundleID(in: file) == request.bundleID else {
-                statuses[request.manifest.id] = .failed("Signed IPA changed. Review it and try again.")
-                return
-            }
-            startInstall(request.manifest, file: file, bundleID: request.bundleID)
-        } catch {
-            statuses[request.manifest.id] = .failed("Cannot validate the signed helper: \(error.localizedDescription)")
-        }
-    }
-
-    private func startInstall(_ manifest: PackageManifest, file: URL, bundleID: String) {
-        Task {
-            do {
-                installer = try await Installer(
-                    archive: manifest.package,
-                    path: file,
-                    installBundleID: bundleID,
-                    installName: manifest.package.software.name + " Decryptor",
-                    installVersion: "1.0"
-                )
-            } catch {
-                statuses[manifest.id] = .failed("Installer unavailable: \(error.localizedDescription). Share the signed IPA instead.")
-            }
-        }
-    }
-
-    private static func helperBundleID(in url: URL) throws -> String {
-        let archive = try Archive(url: url, accessMode: .read)
-        guard let entry = archive["Payload/FairPlayed.app/Info.plist"],
-              entry.uncompressedSize <= 1_048_576 else {
-            throw NSError(domain: "AssppSigner", code: 11,
-                          userInfo: [NSLocalizedDescriptionKey: "The IPA has no valid helper Info.plist."])
-        }
-        var data = Data()
-        _ = try archive.extract(entry) { chunk in
-            guard chunk.count <= 1_048_576 - data.count else {
-                throw NSError(domain: "AssppSigner", code: 12,
-                              userInfo: [NSLocalizedDescriptionKey: "The helper Info.plist is too large."])
-            }
-            data.append(chunk)
-        }
-        guard let info = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let identifier = info["CFBundleIdentifier"] as? String,
-              !identifier.isEmpty else {
-            throw NSError(domain: "AssppSigner", code: 13,
-                          userInfo: [NSLocalizedDescriptionKey: "The signed helper is missing its bundle ID."])
-        }
-        return identifier
-    }
-
     func prepare(_ manifest: PackageManifest) {
         guard manifest.completed, running.insert(manifest.id).inserted else { return }
         statuses[manifest.id] = .preparing
@@ -415,26 +315,17 @@ final class DecryptionCenter {
         let appVersion = manifest.package.software.version
         let storageKey = key(for: manifest)
         let id = manifest.id
-        let signingAssets = SigningCenter.shared.credentials()
 
         Task {
             do {
-                let preparation = try await Task.detached(priority: .userInitiated) {
-                    let unsigned = try FairPlayedHelper.prepare(
+                let output = try await Task.detached(priority: .userInitiated) {
+                    try FairPlayedHelper.prepare(
                         downloadedIPA: input,
                         expectedBundleID: bundleID,
                         name: appName,
                         version: appVersion
                     )
-                    guard let signingAssets else { return (unsigned, false, String?.none) }
-                    do {
-                        let signed = try AssppSigner.sign(unsigned, assets: signingAssets)
-                        return (signed, true, String?.none)
-                    } catch {
-                        return (unsigned, false, String?(error.localizedDescription))
-                    }
                 }.value
-                let (output, didSign, signingError) = preparation
                 // Keep a single prepared helper per download, but never touch
                 // anything the user has already saved outside Asspp's folder.
                 if let previous = UserDefaults.standard.string(forKey: storageKey),
@@ -444,16 +335,8 @@ final class DecryptionCenter {
                     try? FileManager.default.removeItem(atPath: previous)
                 }
                 UserDefaults.standard.set(output.path, forKey: storageKey)
-                if didSign {
-                    UserDefaults.standard.set(output.path, forKey: "Asspp.SignedFairPlayed.\(id.uuidString)")
-                    statuses[id] = .signed
-                } else if let signingError {
-                    statuses[id] = .failed("Auto signing failed: \(signingError). Unsigned IPA available to share.")
-                    sharePackage = PreparedDecryptionPackage(url: output)
-                } else {
-                    statuses[id] = .ready
-                    sharePackage = PreparedDecryptionPackage(url: output)
-                }
+                statuses[id] = .ready
+                sharePackage = PreparedDecryptionPackage(url: output)
             } catch {
                 statuses[id] = .failed(error.localizedDescription)
             }
@@ -493,227 +376,37 @@ final class DecryptionCenter {
     }
 }
 
-/// PKCS#12/private key data and the provisioning profile stay in this device's
-/// Keychain. Nothing is uploaded or included in GitHub Actions builds.
-@MainActor
-@Observable
-final class SigningCenter {
-    static let shared = SigningCenter()
-    private static let service = "wiki.qaq.Asspp.AuthFix.R12Signer"
-    private static let certificateKey = "p12"
-    private static let profileKey = "mobileprovision"
-    private static let passwordKey = "p12-password"
-
-    private(set) var hasCertificate = false
-    private(set) var hasProfile = false
-    private(set) var hasPassword = false
-
-    private init() { refresh() }
-
-    func refresh() {
-        hasCertificate = Self.read(Self.certificateKey) != nil
-        hasProfile = Self.read(Self.profileKey) != nil
-        hasPassword = Self.read(Self.passwordKey) != nil
-    }
-
-    // PKCS#12 supports an empty password. The signing library accepts an
-    // empty C string, so users only need to save a password when their
-    // certificate is actually password-protected.
-    var isConfigured: Bool { hasCertificate && hasProfile }
-
-    enum Item { case certificate, profile }
-
-    // One Files selection can contain a P12, a provisioning profile, both,
-    // or a ZIP containing the pair. No extra file-type or password screens.
-    func importFiles(_ urls: [URL]) throws -> String {
-        guard !urls.isEmpty else { return "No files selected." }
-        var certificate: Data?
-        var profile: Data?
-
-        func receive(_ filename: String, data: Data) throws {
-            let ext = URL(fileURLWithPath: filename).pathExtension.lowercased()
-            guard !data.isEmpty && data.count <= 2_000_000 else {
-                throw NSError(domain: "AssppSigner", code: 20,
-                              userInfo: [NSLocalizedDescriptionKey: "Signing files must each be under 2 MB."])
-            }
-            switch ext {
-            case "p12", "pfx": certificate = data
-            case "mobileprovision", "provisionprofile": profile = data
-            default: break
+/// Removes only the obsolete in-app signer's three records. It never reads or
+/// modifies App Store account tokens, the installed app's signature, or source files.
+private enum RetiredSigningCleanup {
+    static func run() {
+        let defaults = UserDefaults.standard
+        let migrationKey = "Asspp.R17.RetiredSignerCleaned"
+        guard !defaults.bool(forKey: migrationKey) else { return }
+        var allRemoved = true
+        for account in ["p12", "mobileprovision", "p12-password"] {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: "wiki.qaq.Asspp.AuthFix.R12Signer",
+                kSecAttrAccount as String: account,
+            ]
+            let status = SecItemDelete(query as CFDictionary)
+            if status != errSecSuccess && status != errSecItemNotFound {
+                allRemoved = false
             }
         }
-
-        for url in urls {
-            let granted = url.startAccessingSecurityScopedResource()
-            defer { if granted { url.stopAccessingSecurityScopedResource() } }
-            if url.pathExtension.lowercased() == "zip" {
-                let container = try FileManager.default.attributesOfItem(atPath: url.path)
-                guard ((container[.size] as? NSNumber)?.int64Value ?? 0) <= 12_000_000 else {
-                    throw NSError(domain: "AssppSigner", code: 21,
-                                  userInfo: [NSLocalizedDescriptionKey: "The certificate ZIP is unexpectedly large."])
-                }
-                let archive = try Archive(url: url, accessMode: .read)
-                var count = 0
-                for entry in archive {
-                    count += 1
-                    guard count <= 80 else { break }
-                    let ext = URL(fileURLWithPath: entry.path).pathExtension.lowercased()
-                    guard ["p12", "pfx", "mobileprovision", "provisionprofile"].contains(ext),
-                          entry.uncompressedSize <= 2_000_000 else { continue }
-                    var bytes = Data()
-                    _ = try archive.extract(entry) { chunk in
-                        guard chunk.count <= 2_000_000 - bytes.count else {
-                            throw NSError(domain: "AssppSigner", code: 22,
-                                          userInfo: [NSLocalizedDescriptionKey: "A ZIP entry is too large."])
-                        }
-                        bytes.append(chunk)
-                    }
-                    try receive(entry.path, data: bytes)
-                }
-            } else {
-                let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-                guard ((attrs[.size] as? NSNumber)?.int64Value ?? 0) <= 2_000_000 else {
-                    throw NSError(domain: "AssppSigner", code: 24,
-                                  userInfo: [NSLocalizedDescriptionKey: "The selected file is unexpectedly large."])
-                }
-                try receive(url.lastPathComponent, data: Data(contentsOf: url))
+        // Ignore old signed-helper cache pointers without deleting user IPAs.
+        for (key, value) in defaults.dictionaryRepresentation() {
+            if key.hasPrefix("Asspp.SignedFairPlayed.") {
+                defaults.removeObject(forKey: key)
+            } else if key.hasPrefix("Asspp.PreparedFairPlayed."),
+                      let path = value as? String,
+                      URL(fileURLWithPath: path).deletingLastPathComponent() ==
+                          documentsDirectory.appendingPathComponent("FairPlayed/Signed", isDirectory: true) {
+                defaults.removeObject(forKey: key)
             }
         }
-        guard certificate != nil || profile != nil else {
-            throw NSError(domain: "AssppSigner", code: 23,
-                          userInfo: [NSLocalizedDescriptionKey: "Choose .p12, .mobileprovision, or a ZIP containing them."])
-        }
-        if let certificate { try Self.save(certificate, name: Self.certificateKey) }
-        if let profile { try Self.save(profile, name: Self.profileKey) }
-        refresh()
-        if certificate != nil && profile != nil { return "Certificate and profile imported. Signing is ready." }
-        return certificate != nil
-            ? "Certificate imported. Add the provisioning profile to finish."
-            : "Provisioning profile imported. Add the P12 certificate to finish."
-    }
-
-    func importFile(_ url: URL, as item: Item) throws {
-        let granted = url.startAccessingSecurityScopedResource()
-        defer { if granted { url.stopAccessingSecurityScopedResource() } }
-        let data = try Data(contentsOf: url)
-        guard !data.isEmpty, data.count <= 2_000_000 else {
-            throw NSError(domain: "AssppSigner", code: 1, userInfo: [NSLocalizedDescriptionKey: "Certificate/profile is empty or unexpectedly large."])
-        }
-        try Self.save(data, name: item == .certificate ? Self.certificateKey : Self.profileKey)
-        refresh()
-    }
-
-    func savePassword(_ password: String) throws {
-        if password.isEmpty {
-            clearPassword()
-            return
-        }
-        try Self.save(Data(password.utf8), name: Self.passwordKey)
-        refresh()
-    }
-
-    func clearPassword() {
-        SecItemDelete(Self.query(Self.passwordKey) as CFDictionary)
-        refresh()
-    }
-
-    func credentials() -> AssppSigningAssets? {
-        guard let certificate = Self.read(Self.certificateKey),
-              let profile = Self.read(Self.profileKey)
-        else { return nil }
-        let passwordText = Self.read(Self.passwordKey).flatMap { String(data: $0, encoding: .utf8) } ?? ""
-        return AssppSigningAssets(certificate: certificate, profile: profile, password: passwordText)
-    }
-
-    func clear() {
-        for name in [Self.certificateKey, Self.profileKey, Self.passwordKey] {
-            SecItemDelete(Self.query(name) as CFDictionary)
-        }
-        refresh()
-    }
-
-    private static func query(_ name: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: service,
-         kSecAttrAccount as String: name]
-    }
-
-    private static func read(_ name: String) -> Data? {
-        var query = query(name)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var data: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &data) == errSecSuccess else { return nil }
-        return data as? Data
-    }
-
-    private static func save(_ data: Data, name: String) throws {
-        let query = query(name)
-        SecItemDelete(query as CFDictionary)
-        var attributes = query
-        attributes[kSecValueData as String] = data
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        let status = SecItemAdd(attributes as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw NSError(domain: "AssppSigner", code: Int(status), userInfo: [NSLocalizedDescriptionKey: "Could not securely save the signing identity (\(status))."])
-        }
-    }
-}
-
-struct AssppSigningAssets: Sendable {
-    let certificate: Data
-    let profile: Data
-    let password: String
-}
-
-@_silgen_name("AssppSignIPA")
-private func assppNativeSign(_ input: UnsafePointer<CChar>,
-                             _ p12: UnsafePointer<CChar>,
-                             _ password: UnsafePointer<CChar>,
-                             _ profile: UnsafePointer<CChar>,
-                             _ output: UnsafePointer<CChar>,
-                             _ work: UnsafePointer<CChar>,
-                             _ message: UnsafeMutablePointer<CChar>,
-                             _ capacity: Int32) -> Int32
-
-enum AssppSigner {
-    static func sign(_ input: URL, assets: AssppSigningAssets) throws -> URL {
-        let fm = FileManager.default
-        let work = fm.temporaryDirectory.appendingPathComponent("AssppSigning-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: work, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: work) }
-
-        let certificate = work.appendingPathComponent("identity.p12")
-        let profile = work.appendingPathComponent("profile.mobileprovision")
-        try assets.certificate.write(to: certificate, options: .atomic)
-        try assets.profile.write(to: profile, options: .atomic)
-
-        let outputs = documentsDirectory.appendingPathComponent("FairPlayed/Signed", isDirectory: true)
-        try fm.createDirectory(at: outputs, withIntermediateDirectories: true)
-        let output = outputs.appendingPathComponent("FairPlayed-signed-\(UUID().uuidString.prefix(8)).ipa")
-        var message = [CChar](repeating: 0, count: 512)
-        let messageCapacity = Int32(message.count)
-        let result = input.path.withCString { inputPointer in
-            certificate.path.withCString { certificatePointer in
-                assets.password.withCString { passwordPointer in
-                    profile.path.withCString { profilePointer in
-                        output.path.withCString { outputPointer in
-                            work.path.withCString { workPointer in
-                                assppNativeSign(inputPointer, certificatePointer, passwordPointer,
-                                                profilePointer, outputPointer, workPointer,
-                                                &message, messageCapacity)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        guard result == 0, fm.fileExists(atPath: output.path) else {
-            try? fm.removeItem(at: output)
-            let explanation = String(cString: message)
-            throw NSError(domain: "AssppSigner", code: Int(result), userInfo: [NSLocalizedDescriptionKey: explanation.isEmpty ? "Signing failed." : explanation])
-        }
-        return output
+        if allRemoved { defaults.set(true, forKey: migrationKey) }
     }
 }
 
