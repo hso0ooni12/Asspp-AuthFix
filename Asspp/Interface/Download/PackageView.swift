@@ -389,7 +389,9 @@ final class DecryptionCenter {
                 sharePackage = PreparedDecryptionPackage(url: result)
             } catch {
                 batchError = error.localizedDescription
-                for input in inputs { statuses[input.id] = .failed(error.localizedDescription) }
+                // A bulk packaging error is not an error in every downloaded
+                // app. Keep their individual "Decrypt IPA" actions usable.
+                for input in inputs { statuses.removeValue(forKey: input.id) }
             }
             isPreparingBatch = false
         }
@@ -511,6 +513,7 @@ enum FairPlayedHelper {
         let embedded = helper.appendingPathComponent("EmbeddedPayload", isDirectory: true)
         if fm.fileExists(atPath: embedded.path) { try fm.removeItem(at: embedded) }
         try fm.createDirectory(at: embedded, withIntermediateDirectories: true)
+        var embeddedNames: [String] = []
 
         // FairPlayed must be signed with the target inside its own app bundle.
         // Dropping .app on the embedded directory keeps encrypted code as resources.
@@ -575,14 +578,14 @@ enum FairPlayedHelper {
             guard (try info(at: target)["CFBundleIdentifier"] as? String) == entry.bundleID else {
                 throw PreparationError.bundleMismatch
             }
-            let destination = embedded.appendingPathComponent(
-                safePart(entry.name) + "-" + safePart(entry.version) + "-" +
-                    String(entry.id.uuidString.prefix(8)), isDirectory: true
-            )
+            let embeddedName = safePart(entry.name) + "-" + safePart(entry.version) + "-" +
+                String(entry.id.uuidString.prefix(8))
+            let destination = embedded.appendingPathComponent(embeddedName, isDirectory: true)
             try fm.copyItem(at: target, to: destination)
             let watch = destination.appendingPathComponent("Watch", isDirectory: true)
             if fm.fileExists(atPath: watch.path) { try fm.removeItem(at: watch) }
             try replicateSINF(in: destination)
+            embeddedNames.append(embeddedName)
             try fm.removeItem(at: unpacked)
             progress(index + 1)
         }
@@ -598,11 +601,24 @@ enum FairPlayedHelper {
         try fm.zipItem(at: staged, to: output, shouldKeepParent: false,
                        compressionMethod: .deflate)
         let archived = try Archive(url: output, accessMode: .read)
-        let embeddedCount = archived.filter { $0.path.contains("/EmbeddedPayload/") &&
-            $0.path.hasSuffix("/Info.plist") }.count
-        guard embeddedCount == inputs.count else {
+        // Apps often contain nested Frameworks/*.framework/Info.plist.
+        // Counting ALL nested Info.plist entries was a false-positive and
+        // rejected a perfectly valid multi-app helper. Only count each direct
+        // EmbeddedPayload/<app>/Info.plist file, exactly one level down.
+        let expectedNames = Set(embeddedNames)
+        var verifiedNames = Set<String>()
+        for archiveEntry in archived {
+            guard let marker = archiveEntry.path.range(of: "/EmbeddedPayload/") else { continue }
+            let relativePath = archiveEntry.path[marker.upperBound...]
+            let parts = relativePath.split(separator: "/")
+            if parts.count == 2, parts[1] == "Info.plist" {
+                verifiedNames.insert(String(parts[0]))
+            }
+        }
+        guard expectedNames.count == inputs.count, verifiedNames == expectedNames else {
             try? fm.removeItem(at: output)
-            throw PreparationError.emptyPayload
+            throw PreparationError.batchArchiveMismatch(expected: inputs.count,
+                                                        found: verifiedNames.count)
         }
         return output
     }
@@ -678,6 +694,7 @@ enum FairPlayedHelper {
     private enum PreparationError: LocalizedError {
         case missingShell, missingDownload, notIPA, invalidShell
         case bundleMismatch, invalidLicense, unsafeArchive, emptyPayload
+        case batchArchiveMismatch(expected: Int, found: Int)
 
         var errorDescription: String? {
             switch self {
@@ -689,6 +706,8 @@ enum FairPlayedHelper {
             case .invalidLicense: "Missing or invalid FairPlay license data."
             case .unsafeArchive: "The IPA contains an unsafe file path."
             case .emptyPayload: "The prepared FairPlayed IPA has no embedded app."
+            case let .batchArchiveMismatch(expected, found):
+                "Batch IPA verification found \(found) of \(expected) embedded apps."
             }
         }
     }

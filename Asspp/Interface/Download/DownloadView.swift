@@ -12,8 +12,6 @@ struct DownloadView: View {
     @State private var decryptor = DecryptionCenter.shared
     @State private var selectionMode = false
     @State private var selectedIDs: Set<UUID> = []
-    @State private var deletionID: UUID?
-    @State private var showDeleteConfirmation = false
     @State private var showBatchError = false
 
     var body: some View {
@@ -130,21 +128,6 @@ struct DownloadView: View {
         .navigationDestination(for: PackageManifest.self) { manifest in
             PackageView(pkg: manifest)
         }
-        .confirmationDialog("Delete this download?", isPresented: $showDeleteConfirmation) {
-            Button("Delete Download", role: .destructive) {
-                let id = deletionID
-                deletionID = nil
-                // Dismiss the swipe/confirmation UI before changing the List.
-                Task { @MainActor in
-                    await Task.yield()
-                    if let id, let request = vm.manifests.first(where: { $0.id == id }) {
-                        vm.delete(request: request)
-                    }
-                }
-            }
-        } message: {
-            Text("The original IPA is removed. Prepared FairPlayed helpers are kept.")
-        }
         .alert("Bulk Preparation", isPresented: $showBatchError) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -201,13 +184,23 @@ struct DownloadView: View {
                     .disabled(!req.completed)
                 }
                 PackageManifestRow(manifest: req) {
-                    deletionID = req.id
-                    showDeleteConfirmation = true
+                    deleteImmediately(id: req.id)
                 }
             }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 7, leading: 18, bottom: 7, trailing: 18))
+        }
+    }
+
+    private func deleteImmediately(id: UUID) {
+        // The context menu/swipe action gets one event cycle to dismiss, then
+        // the row is removed safely. There is no second confirmation tap.
+        Task { @MainActor in
+            await Task.yield()
+            guard let request = vm.manifests.first(where: { $0.id == id }) else { return }
+            selectedIDs.remove(id)
+            vm.delete(request: request)
         }
     }
 }
