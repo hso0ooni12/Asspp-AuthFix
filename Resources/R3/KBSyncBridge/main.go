@@ -31,6 +31,10 @@ var kbsyncCache = struct {
     blobs map[string]string
 }{blobs: make(map[string]string)}
 
+// The interpreter has a substantial working set. Serialize cold generations
+// across accounts and recheck the memory cache after waiting for the engine.
+var generationMutex sync.Mutex
+
 //export R3GenerateKBSync
 func R3GenerateKBSync(guid *C.char, accountDSID C.ulonglong) *C.char {
     if guid == nil || accountDSID == 0 {
@@ -44,6 +48,15 @@ func R3GenerateKBSync(guid *C.char, accountDSID C.ulonglong) *C.char {
     cacheKey := strings.ToUpper(hexGUID) + ":" + strconv.FormatUint(uint64(accountDSID), 10)
     kbsyncCache.Lock()
     cached := kbsyncCache.blobs[cacheKey]
+    kbsyncCache.Unlock()
+    if cached != "" {
+        return C.CString(cached)
+    }
+
+    generationMutex.Lock()
+    defer generationMutex.Unlock()
+    kbsyncCache.Lock()
+    cached = kbsyncCache.blobs[cacheKey]
     kbsyncCache.Unlock()
     if cached != "" {
         return C.CString(cached)

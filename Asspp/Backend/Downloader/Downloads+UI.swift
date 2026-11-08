@@ -58,16 +58,38 @@ extension Downloads {
     }
 }
 
+struct DownloadRequestIdentity: Hashable {
+    let accountID: String
+    let bundleID: String
+    let appID: Int64
+    let platform: String
+    let version: String?
+}
+
 extension Downloads {
     func startDownload(for package: AppStore.AppPackage, accountID: String) async throws {
-        try await AppStore.this.withAccount(id: accountID) { account in
-            let downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
-            let request = try Downloads.this.add(request: .init(
-                account: account,
-                package: package,
-                downloadOutput: downloadOutput,
-            ))
-            Downloads.this.resume(request: request)
+        let key = DownloadRequestIdentity(accountID: accountID,
+                                          bundleID: package.software.bundleID,
+                                          appID: package.software.id,
+                                          platform: (package.entityType ?? .iPhone).rawValue,
+                                          version: package.externalVersionID)
+        if let existing = pendingDownloadRequests[key] {
+            try await existing.value
+            return
         }
+        let task = Task { @MainActor in
+            try await AppStore.this.withAccount(id: accountID) { account in
+                let downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
+                let request = try Downloads.this.add(request: .init(
+                    account: account,
+                    package: package,
+                    downloadOutput: downloadOutput,
+                ))
+                Downloads.this.resume(request: request)
+            }
+        }
+        pendingDownloadRequests[key] = task
+        defer { pendingDownloadRequests[key] = nil }
+        try await task.value
     }
 }

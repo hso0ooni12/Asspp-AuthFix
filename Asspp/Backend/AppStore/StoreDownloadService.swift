@@ -14,6 +14,19 @@ enum StoreDownloadService {
         }
     }
 
+    // Reuse verified TLS connections, while cookies/tokens remain explicit
+    // per request. No automatic cookies, credentials, redirects or disk cache.
+    private static let metadataSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCredentialStorage = nil
+        configuration.urlCache = nil
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 60
+        return URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
+    }()
+
     static func download(account: inout Account, package: AppStore.AppPackage) async throws -> DownloadOutput {
         let email = account.email
         return try await product(account: &account, package: package, version: package.externalVersionID, operation: "download") { item in
@@ -49,15 +62,8 @@ enum StoreDownloadService {
         let version = version.flatMap { $0.isEmpty ? nil : $0 }
         let platform = package.entityType ?? .iPhone
         logger.info("Store download [\(trace)]: operation=\(operation) app=\(app.id) platform=\(platform.rawValue) store=\(account.store) version=\(version ?? "latest")")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieStorage = nil
-        configuration.httpShouldSetCookies = false
-        configuration.urlCredentialStorage = nil
-        configuration.urlCache = nil
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
-        let session = URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
+        let session = metadataSession
+        let started = ContinuousClock.now
         do {
             let region = Configuration.countryCode(for: account.store)
             var effectiveVersion = version
@@ -66,6 +72,14 @@ enum StoreDownloadService {
             var preferredResponse: [String: Any]?
             if operation == "download" {
                 do {
+                    // Catalog metadata and account-bound preparation are independent.
+                    // A shared task also joins any foreground search warm-up.
+                    let guid = Configuration.deviceIdentifier
+                    let dsid = account.directoryServicesIdentifier
+                    logger.info("Store download [\(trace)]: kbsync preparation starting")
+                    let preparation = Task {
+                        await DownloadPreparation.shared.generation(guid: guid, dsid: dsid)
+                    }
                     let preferredVersion: String
                     if let version {
                         preferredVersion = version
@@ -78,9 +92,12 @@ enum StoreDownloadService {
                         }
                         preferredVersion = metadata.externalVersionID
                     }
+                    let generation = await preparation.value
                     preferredResponse = try await fetchPreferred(session: session, account: &account,
                                                                   appID: app.id, bundleID: app.bundleID,
-                                                                  version: preferredVersion, trace: trace)
+                                                                  version: preferredVersion,
+                                                                  generation: generation,
+                                                                  trace: trace)
                     effectiveVersion = preferredVersion
                 } catch {
                     try Task.checkCancellation()
@@ -121,7 +138,8 @@ enum StoreDownloadService {
             }
             let item = try StoreDownloadProtocol.packageItem(response, bundleID: app.bundleID, version: effectiveVersion)
             let result = try parse(item)
-            logger.info("Store download [\(trace)]: product metadata ready")
+            let elapsed = started.duration(to: .now)
+            logger.info("Store download [\(trace)]: product metadata ready elapsed=\(elapsed)")
             return result
         } catch {
             // localizedDescription and NSError.userInfo can contain Apple messages
@@ -215,7 +233,8 @@ enum StoreDownloadService {
     /// Preferred R3 request. No redirects are followed because X-Token must never
     /// be sent to a different destination. Only the fixed Apple endpoint is used.
     private static func fetchPreferred(session: URLSession, account: inout Account, appID: Int64,
-                                       bundleID: String, version: String, trace: String) async throws -> [String: Any]
+                                       bundleID: String, version: String,
+                                       generation: R3KBSync.Generation, trace: String) async throws -> [String: Any]
     {
         let guid = Configuration.deviceIdentifier
         let dsid = account.directoryServicesIdentifier
@@ -225,10 +244,6 @@ enum StoreDownloadService {
         // KBSync may fail before any request reaches Apple's download server.
         // Log a fixed stage code so failures can be diagnosed without leaking
         // credentials, device identifiers, the blob, or a signed package URL.
-        logger.info("Store download [\(trace)]: kbsync preparation starting")
-        let generation = await Task.detached(priority: .utility) {
-            R3KBSync.generate(guid: guid, directoryServicesIdentifier: dsid)
-        }.value
         logger.info("Store download [\(trace)]: kbsync status=\(generation.status)")
         guard let blob = generation.blob else { throw StoreDownloadError.invalidPackage }
 

@@ -38,6 +38,7 @@ struct ProductView: View {
     @State private var licenseHint: Hint?
     @State private var showLicenseAlert = false
     @State private var hint: Hint?
+    @State private var requestingDownload = false
 
     let sizeFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
@@ -87,6 +88,10 @@ struct ProductView: View {
         .tint(AssppTheme.accent)
         .onAppear {
             selection = eligibleAccounts.first?.id ?? .init()
+            vm.prepareDownloads(region: region, accountID: selection)
+        }
+        .onChange(of: selection) { _, value in
+            vm.prepareDownloads(region: region, accountID: value)
         }
         .navigationDestination(for: PackageManifest.self) { manifest in
             PackageView(pkg: manifest)
@@ -233,6 +238,8 @@ struct ProductView: View {
             } else {
                 AsyncButton {
                     guard let account else { return }
+                    requestingDownload = true
+                    defer { requestingDownload = false }
                     do {
                         try await dvm.startDownload(for: archive.package, accountID: account.id)
                         hint = Hint(message: String(localized: "Download Requested"), color: nil)
@@ -248,7 +255,7 @@ struct ProductView: View {
                         throw error
                     }
                 } label: {
-                    Text("Request Download")
+                    Text(requestingDownload ? "Preparing download..." : "Request Download")
                 }
                 .disabledWhenLoading()
                 .disabled(account == nil)
@@ -260,7 +267,7 @@ struct ProductView: View {
                 Text(hint.message)
                     .foregroundStyle(hint.color ?? .primary)
             } else {
-                Text("Package can be installed later in download page.")
+                Text(requestingDownload ? "Preparing a secure download request. The first request can take longer." : "Package can be installed later in download page.")
             }
         }
     }

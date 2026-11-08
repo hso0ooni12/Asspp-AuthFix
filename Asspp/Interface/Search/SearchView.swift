@@ -141,8 +141,12 @@ struct SearchView: View {
             if searching || !searchResult.isEmpty {
                 Section(searching ? "Searching..." : "\(searchResult.count) Results") {
                     ForEach(searchResult) { item in
-                        NavigationLink(value: ProductDestination(archive: item, region: searchRegion)) {
-                            ArchivePreviewView(archive: item)
+                        HStack(spacing: 12) {
+                            NavigationLink(value: ProductDestination(archive: item, region: searchRegion)) {
+                                ArchivePreviewView(archive: item)
+                            }
+                            .buttonStyle(.plain)
+                            QuickDownloadButton(package: item, region: searchRegion)
                         }
                     }
                     .transition(.opacity)
@@ -160,6 +164,9 @@ struct SearchView: View {
         }
         .animation(.spring, value: searchResult)
         .onAppear { consumePendingFocus() }
+        .task(id: searchRegion + vm.accounts.map(\.id).joined(separator: "|")) {
+            vm.prepareDownloads(region: searchRegion)
+        }
         .onChange(of: searchFocus.pending) { _, isPending in
             if isPending {
                 consumePendingFocus()
@@ -349,12 +356,15 @@ extension SearchView {
                                 .foregroundStyle(AssppTheme.accent)
                         }
                         ForEach(searchResult) { item in
-                            NavigationLink(value: ProductDestination(archive: item, region: searchRegion)) {
-                                AssppCard {
-                                    ArchivePreviewView(archive: item)
+                            AssppCard {
+                                HStack(spacing: 12) {
+                                    NavigationLink(value: ProductDestination(archive: item, region: searchRegion)) {
+                                        ArchivePreviewView(archive: item)
+                                    }
+                                    .buttonStyle(.plain)
+                                    QuickDownloadButton(package: item, region: searchRegion)
                                 }
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -372,6 +382,9 @@ extension SearchView {
                 PackageView(pkg: manifest)
             }
             .onAppear { consumePendingFocus() }
+            .task(id: searchRegion + vm.accounts.map(\.id).joined(separator: "|")) {
+                vm.prepareDownloads(region: searchRegion)
+            }
             .onChange(of: searchFocus.pending) { _, isPending in
                 if isPending { consumePendingFocus() }
             }

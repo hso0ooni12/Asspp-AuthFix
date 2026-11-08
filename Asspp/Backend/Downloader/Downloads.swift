@@ -27,6 +27,11 @@ class Downloads {
     @ObservationIgnored
     private var registeredCallbacks: Set<UUID> = []
 
+    /// Share one metadata request when multiple entry points request the same
+    /// account, app, platform and version at once.
+    @ObservationIgnored
+    var pendingDownloadRequests: [DownloadRequestIdentity: Task<Void, Error>] = [:]
+
     private static let speedFormatter: ByteCountFormatter = {
         let fmt = ByteCountFormatter()
         fmt.allowedUnits = .useAll

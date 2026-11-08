@@ -132,6 +132,18 @@ class AppStore {
         accounts.filter { ApplePackage.Configuration.countryCode(for: $0.account.store) == region }
     }
 
+    /// Warm only the selected/first eligible account in memory. This neither
+    /// purchases a license nor requests a package URL.
+    func prepareDownloads(region: String? = nil, accountID: String? = nil) {
+        let available = region.map { eligibleAccounts(for: $0) } ?? accounts
+        guard let account = available.first(where: { accountID == nil || $0.id == accountID }) else { return }
+        let guid = ApplePackage.Configuration.deviceIdentifier
+        let dsid = account.account.directoryServicesIdentifier
+        Task(priority: .utility) {
+            _ = await DownloadPreparation.shared.generation(guid: guid, dsid: dsid, priority: .utility)
+        }
+    }
+
     nonisolated func withAccount<T>(id: String, _ body: (inout UserAccount) async throws -> T) async throws -> T {
         guard var account = await accounts.first(where: { $0.id == id }) else {
             throw AuthenticationError.accountNotFound

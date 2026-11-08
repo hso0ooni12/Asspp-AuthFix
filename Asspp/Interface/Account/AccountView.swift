@@ -50,6 +50,9 @@ struct AccountView: View {
                 .navigationTitle("Accounts")
                 .toolbar { macToolbar }
             }
+            .task(id: vm.accounts.map(\.id).joined(separator: "|")) {
+                vm.prepareDownloads()
+            }
             .sheet(isPresented: $addAccount) {
                 AddAccountView()
                     .frame(minWidth: 480, idealWidth: 520, minHeight: 340, idealHeight: 380)
@@ -238,6 +241,9 @@ struct AccountView: View {
                         }
                     }
                 }
+            }
+            .task(id: vm.accounts.map(\.id).joined(separator: "|")) {
+                vm.prepareDownloads()
             }
             .sheet(isPresented: $addAccount) {
                 NavigationStack {
