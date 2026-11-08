@@ -51,6 +51,31 @@ if [[ -n "${R12_SIGNER_ARCHIVE:-}" ]]; then
   extra_xcodebuild_flags=(OTHER_LDFLAGS="${native_link_flags}")
 fi
 
+# Some upstream SPM binary artifacts are hosted on GitHub Releases and can
+# intermittently return HTTP 504. Keep the same checked-out source package
+# directory across attempts so already downloaded dependencies are reused.
+# Resolve before compiling so network errors cannot be mistaken for Swift
+# compilation failures.
+package_resolution_ok=0
+for package_attempt in 1 2 3 4 5 6; do
+  echo "Resolving Xcode packages (attempt ${package_attempt}/6)"
+  if xcodebuild -resolvePackageDependencies \
+    -workspace Asspp.xcworkspace -scheme Asspp \
+    -clonedSourcePackagesDirPath .build-authfix/SourcePackages \
+    > artifacts/package-resolution.log 2>&1; then
+    package_resolution_ok=1
+    break
+  fi
+  tail -12 artifacts/package-resolution.log
+  if [[ "$package_attempt" -lt 6 ]]; then
+    sleep "$((package_attempt * 8))"
+  fi
+done
+if [[ "$package_resolution_ok" -ne 1 ]]; then
+  echo '::error::Package dependencies could not be resolved after six attempts.'
+  exit 1
+fi
+
 xcodebuild -workspace Asspp.xcworkspace -scheme Asspp -configuration Release \
   -destination 'generic/platform=iOS' \
   -derivedDataPath .build-authfix/DerivedData \
