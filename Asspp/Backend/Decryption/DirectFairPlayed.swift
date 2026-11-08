@@ -117,10 +117,10 @@ enum DirectFairPlayed {
         }
         do {
             try fm.createDirectory(at: report.deletingLastPathComponent(), withIntermediateDirectories: true)
-            log.add("Asspp R19 · Direct FairPlayed experiment · not device-validated by CI")
+            log.add("Asspp R21 · Direct FairPlayed four-mode experiment · not device-validated by CI")
             log.add("Core: morzelowski/FairPlayed bad7df138839b5e0ac8b9f20cc4689140b8436fb + R9 tiny-stub check")
             log.add("System: \(ProcessInfo.processInfo.operatingSystemVersionString)")
-            log.add("Modes: READ / cryptid=2 only; no executable mapping, no JIT")
+            log.add("Modes: R/cryptid2 + RX/cryptid1 (four upstream attempts); no code execution or JIT")
             log.add("Private account and license data are omitted.")
             // Fail early on builds that did not link the experimental engine.
             let _: NativeFairPlayed.Process = try NativeFairPlayed.symbol("AssppFPProcess", as: NativeFairPlayed.Process.self)
