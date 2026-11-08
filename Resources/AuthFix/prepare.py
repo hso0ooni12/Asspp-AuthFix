@@ -60,7 +60,17 @@ binary_dir = openssl_package / "libssl.xcframework"
 if not (binary_dir / "Info.plist").is_file():
     subprocess.run(["/usr/bin/ditto", "-x", "-k", str(binary_zip), str(openssl_package)], check=True)
 if not (binary_dir / "Info.plist").is_file():
-    raise SystemExit("OpenSSL release does not contain libssl.xcframework")
+    # The published archive has not always had the XCFramework at ZIP root.
+    # Rehome a single verified XCFramework so SwiftPM can reference it locally.
+    candidates = [p for p in openssl_package.rglob("*.xcframework")
+                  if (p / "Info.plist").is_file() and p != binary_dir]
+    if len(candidates) == 1:
+        shutil.move(str(candidates[0]), str(binary_dir))
+if not (binary_dir / "Info.plist").is_file():
+    import zipfile
+    with zipfile.ZipFile(binary_zip) as source:
+        print("Official OpenSSL archive entries:", source.namelist()[:22])
+    raise SystemExit("OpenSSL release does not contain a recognizable XCFramework")
 
 openssl_manifest = openssl_package / "Package.swift"
 openssl_text = openssl_manifest.read_text()
