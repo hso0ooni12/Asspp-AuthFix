@@ -85,6 +85,14 @@ struct PackageView: View {
                 #endif
                 #if os(iOS)
                     Section {
+                        DirectDecryptionControls(manifest: pkg)
+                    } header: {
+                        Text("Direct Decryption · Experimental")
+                    } footer: {
+                        Text("Runs FairPlayed inside Asspp. Keep Asspp open. iOS may deny file or license access; only a complete, verified IPA is shared. The separate FairPlayed method remains available below.")
+                    }
+
+                    Section {
                         AsyncButton {
                             installer = try await Installer(archive: archive, path: url)
                         } label: {
@@ -415,6 +423,12 @@ enum FairPlayedHelper {
     private static let fm = FileManager.default
     private static var base: URL {
         documentsDirectory.appendingPathComponent("FairPlayed", isDirectory: true)
+    }
+
+    // Reuse the exact SINF replication rules of the proven helper. The caller
+    // passes only its disposable extracted copy, never an installed bundle.
+    static func normalizeLicenseForDirectAttempt(at app: URL) throws {
+        try replicateSINF(in: app)
     }
 
     static func prepare(downloadedIPA: URL, expectedBundleID: String, name: String, version: String) throws -> URL {

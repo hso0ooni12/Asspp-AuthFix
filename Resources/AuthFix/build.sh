@@ -57,6 +57,10 @@ if [[ -n "${R3_KBSYNC_ARCHIVE:-}" ]]; then
     # no-JIT static interpreter library and export its public API from the app binary.
     native_link_flags+=" -force_load ${R6_TCI_ARCHIVE} -Wl,-export_dynamic"
   fi
+  if [[ -n "${R19_FAIRPLAYED_ARCHIVE:-}" ]]; then
+    [[ -s "${R19_FAIRPLAYED_ARCHIVE}" ]] || { echo "Missing experimental FairPlayed archive"; exit 1; }
+    native_link_flags+=" -force_load ${R19_FAIRPLAYED_ARCHIVE} -Wl,-export_dynamic"
+  fi
   extra_xcodebuild_flags=(OTHER_LDFLAGS="${native_link_flags}")
 fi
 

@@ -150,6 +150,9 @@ private struct PackageManifestRow: View {
                 .lineLimit(1)
 
                 if manifest.completed {
+                    #if os(iOS)
+                        DirectDecryptionControls(manifest: manifest)
+                    #endif
                     HStack(spacing: 10) {
                         Button {
                             decryptor.prepare(manifest)
@@ -167,6 +170,14 @@ private struct PackageManifestRow: View {
         }
         .contextMenu {
             if manifest.completed {
+                #if os(iOS)
+                    Button {
+                        DirectDecryptionCenter.shared.start(manifest)
+                    } label: {
+                        Label("Try Direct Decrypt · Experimental", systemImage: "bolt.shield")
+                    }
+                    .disabled(DirectDecryptionCenter.shared.isBusy)
+                #endif
                 Button {
                     decryptor.prepare(manifest)
                 } label: {
