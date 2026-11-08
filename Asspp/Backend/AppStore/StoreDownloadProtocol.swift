@@ -146,7 +146,32 @@ enum StoreDownloadProtocol {
         resolveVersion: () async throws -> String,
         onFallback: (String) -> Void,
     ) async throws -> [String: Any] {
-        let primary = try await fetch(.volumeStore, version)
+        // A slow Apple buy pod must not terminate the entire request if the
+        // authenticated redownload endpoint can still serve the same version.
+        // This does not acquire a license or retry a purchase.
+        let primary: [String: Any]
+        do {
+            primary = try await fetch(.volumeStore, version)
+        } catch {
+            try Task.checkCancellation()
+            let nsError = error as NSError
+            guard nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorTimedOut else {
+                throw error
+            }
+            onFallback("volumeStore-timeout")
+            let resolved: String = if let version, !version.isEmpty {
+                version
+            } else {
+                try await resolveVersion()
+            }
+            guard !resolved.isEmpty else { throw StoreDownloadError.catalogUnavailable }
+            do {
+                return try await fetch(.redownload, resolved)
+            } catch StoreDownloadError.emptyResponse(500) {
+                onFallback("empty-redownload-http500")
+                return try await fetch(.update, resolved)
+            }
+        }
         guard let reason = fallbackReason(primary) else { return primary }
         onFallback(reason)
         let resolved: String = if let version, !version.isEmpty {
