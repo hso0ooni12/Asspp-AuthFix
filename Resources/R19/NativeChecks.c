@@ -91,12 +91,12 @@ int main(void) {
     puts("PASS 1200 malformed-input mutations under sanitizers");
 
     fp_attempt_t attempt; fp_slice_t slice = {0};
-    assert(fp_attempt(source, &slice, FP_MODE_RX_CID1, false, NULL, &attempt) == -1);
+    assert(fp_attempt(source, &slice, FP_MODE_R_CID1, false, NULL, &attempt) == -1);
     assert(attempt.mmap_errno == ENOTSUP);
     unlink(source); assert(symlink("/nonexistent", source) == 0);
     assert(AssppFPInspect(source, note, sizeof note) == -1);
     unlink(source); rmdir(dir);
-    puts("PASS executable-mapping modes and symlink inputs are rejected");
+    puts("PASS unsupported mapping mode and symlink inputs are rejected");
     puts("Host checks do not establish that real App Store decryption works on an iPhone.");
     return 0;
 }
