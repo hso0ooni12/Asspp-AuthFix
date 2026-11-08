@@ -12,7 +12,6 @@ struct QuickDownloadButton: View {
     @State private var choosingAccount = false
     @State private var errorMessage = ""
     @State private var showingError = false
-    @State private var needsLicense = false
     @State private var selectedAccount: String?
 
     private var accounts: [AppStore.UserAccount] { store.eligibleAccounts(for: region) }
@@ -58,15 +57,6 @@ struct QuickDownloadButton: View {
         } message: {
             Text(errorMessage)
         }
-        .alert("Free License Required", isPresented: $needsLicense) {
-            Button("Acquire Free License & Download") {
-                guard let selectedAccount else { return }
-                begin(accountID: selectedAccount, acquireFreeLicense: true)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Add this free app to the selected account, then start downloading it.")
-        }
     }
 
     private func selectAccount() {
@@ -81,29 +71,17 @@ struct QuickDownloadButton: View {
         }
     }
 
-    private func begin(accountID: String, acquireFreeLicense: Bool = false) {
+    private func begin(accountID: String) {
         guard !requesting else { return }
         selectedAccount = accountID
         requesting = true
         Task {
             defer { requesting = false }
             do {
-                if acquireFreeLicense {
-                    // Never silently acquire a license or purchase a paid app.
-                    guard package.software.price == 0 else { return }
-                    try await store.withAccount(id: accountID) { account in
-                        try await ApplePackage.Authenticator.rotatePasswordToken(for: &account.account)
-                        try await ApplePackage.Purchase.purchase(account: &account.account, app: package.software)
-                    }
-                }
                 try await downloads.startDownload(for: package, accountID: accountID)
             } catch {
-                if case ApplePackageError.licenseRequired = error, package.software.price == 0 {
-                    needsLicense = true
-                } else {
-                    errorMessage = error.localizedDescription
-                    showingError = true
-                }
+                errorMessage = error.localizedDescription
+                showingError = true
             }
         }
     }

@@ -35,8 +35,6 @@ struct ProductView: View {
     }
 
     @State private var selection: AppStore.UserAccount.ID = .init()
-    @State private var licenseHint: Hint?
-    @State private var showLicenseAlert = false
     @State private var hint: Hint?
     @State private var requestingDownload = false
 
@@ -97,42 +95,6 @@ struct ProductView: View {
             PackageView(pkg: manifest)
         }
         .navigationTitle("Select Account")
-        .alert("License Required", isPresented: $showLicenseAlert) {
-            var confirmRole: ButtonRole?
-            #if compiler(>=6.2)
-                if #available(iOS 26.0, macOS 26.0, *) {
-                    confirmRole = .confirm
-                }
-            #endif
-
-            return Group {
-                Button("Acquire License", role: confirmRole) {
-                    Task {
-                        do {
-                            try await acquireLicense()
-                        } catch {
-                            licenseHint = Hint(message: error.localizedDescription, color: .red)
-                        }
-                    }
-                }
-
-                Button("Cancel", role: .cancel) {}
-            }
-        } message: {}
-    }
-
-    /// Rotates the password token and requests a license for the current
-    /// account. Sets `licenseHint` to a success message; callers handle errors.
-    private func acquireLicense() async throws {
-        guard let account else { return }
-        try await vm.withAccount(id: account.id) { userAccount in
-            try await ApplePackage.Authenticator.rotatePasswordToken(for: &userAccount.account)
-            try await ApplePackage.Purchase.purchase(
-                account: &userAccount.account,
-                app: archive.package.software,
-            )
-        }
-        licenseHint = Hint(message: String(localized: "Request Succeeded"), color: .green)
     }
 
     var packageHeader: some View {
@@ -190,25 +152,13 @@ struct ProductView: View {
 
     var pricing: some View {
         Section {
-            Text("\(archive.formattedPrice ?? "N/A")")
-            if archive.price == 0 {
-                AsyncButton {
-                    try await acquireLicense()
-                } label: {
-                    Text("Acquire License")
-                }
-                .disabledWhenLoading()
-                .disabled(account == nil)
-            }
+            Text(archive.formattedPrice ?? "N/A")
         } header: {
-            Text("Pricing")
+            Text("Price")
         } footer: {
-            if let licenseHint {
-                Text(licenseHint.message)
-                    .foregroundStyle(licenseHint.color ?? .primary)
-            } else {
-                Text("Acquiring a license is not available for paid apps. Purchase from the App Store first, then download here. If you've already purchased it, this may fail.")
-            }
+            Text(archive.package.software.price == 0
+                ? "Free license is acquired automatically if needed when you tap Download."
+                : "Paid apps must already be owned by this Apple Account; no purchases are made here.")
         }
     }
 
@@ -247,11 +197,7 @@ struct ProductView: View {
                             navigationPath.append(req)
                         }
                     } catch {
-                        if case ApplePackageError.licenseRequired = error, archive.package.software.price == 0 {
-                            showLicenseAlert = true
-                        } else {
-                            hint = Hint(message: String(localized: "Unable to retrieve download URL. Please try again later.") + "\n" + error.localizedDescription, color: .red)
-                        }
+                        hint = Hint(message: error.localizedDescription, color: .red)
                         throw error
                     }
                 } label: {

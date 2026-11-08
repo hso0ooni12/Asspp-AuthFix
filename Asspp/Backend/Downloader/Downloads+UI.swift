@@ -79,7 +79,32 @@ extension Downloads {
         }
         let task = Task { @MainActor in
             try await AppStore.this.withAccount(id: accountID) { account in
-                let downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
+                let downloadOutput: DownloadOutput
+                do {
+                    downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
+                } catch ApplePackageError.licenseRequired {
+                    // The Get action authorizes acquiring a FREE license, never
+                    // charging the account or accepting Apple terms silently.
+                    guard FreeLicensePolicy.shouldAcquire(price: package.software.price) else {
+                        throw ApplePackageError.licenseRequired
+                    }
+                    logger.info("Free app lacks a license; acquiring and resuming requested download.")
+                    do {
+                        try await ApplePackage.Purchase.purchase(account: &account.account, app: package.software)
+                    } catch {
+                        if FreeLicensePolicy.isExpiredToken(error.localizedDescription) {
+                            // Only pay the cost of an SAP refresh when Apple's
+                            // response proves that the stored token has expired.
+                            try await ApplePackage.Authenticator.rotatePasswordToken(for: &account.account)
+                            try await ApplePackage.Purchase.purchase(account: &account.account, app: package.software)
+                        } else if !FreeLicensePolicy.isAlreadyOwned(error.localizedDescription) {
+                            throw error
+                        }
+                    }
+                    // Exactly one retry after a successful purchase or an
+                    // already-owned response; no unbounded request loops.
+                    downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
+                }
                 let request = try Downloads.this.add(request: .init(
                     account: account,
                     package: package,
