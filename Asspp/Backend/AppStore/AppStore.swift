@@ -132,16 +132,12 @@ class AppStore {
         accounts.filter { ApplePackage.Configuration.countryCode(for: $0.account.store) == region }
     }
 
-    /// Warm only the selected/first eligible account in memory. This neither
-    /// purchases a license nor requests a package URL.
+    /// R20: intentionally no foreground KBSync generation. Running the emulator
+    /// while searching or managing accounts could starve requests and keep
+    /// the download spinner active for up to 150 seconds. Generate only when
+    /// the user explicitly requests a download.
     func prepareDownloads(region: String? = nil, accountID: String? = nil) {
-        let available = region.map { eligibleAccounts(for: $0) } ?? accounts
-        guard let account = available.first(where: { accountID == nil || $0.id == accountID }) else { return }
-        let guid = ApplePackage.Configuration.deviceIdentifier
-        let dsid = account.account.directoryServicesIdentifier
-        Task(priority: .utility) {
-            _ = await DownloadPreparation.shared.generation(guid: guid, dsid: dsid, priority: .utility)
-        }
+        // No-op retained for existing view call sites.
     }
 
     nonisolated func withAccount<T>(id: String, _ body: (inout UserAccount) async throws -> T) async throws -> T {
