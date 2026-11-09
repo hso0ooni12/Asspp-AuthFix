@@ -23,6 +23,8 @@ struct SettingView: View {
     @State private var editingDeviceId = false
     @State private var deviceIdDraft = ""
     @State private var showResetConfirmation = false
+    @State private var showDeleteAllConfirmation = false
+    @State private var showAdvancedSettings = false
     #if os(iOS)
         @State private var showClearPreparedConfirmation = false
         @State private var decryptor = DecryptionCenter.shared
@@ -90,7 +92,7 @@ struct SettingView: View {
             Section {
                 Toggle("Demo Mode", isOn: $vm.demoMode)
                 Button("Delete All Downloads", role: .destructive) {
-                    Downloads.this.removeAll()
+                    showDeleteAllConfirmation = true
                 }
             } header: {
                 Text("GENERAL")
@@ -98,8 +100,16 @@ struct SettingView: View {
                 Text("Demo mode hides account details. Delete All Downloads removes the original downloaded IPAs.")
             }
             .listRowBackground(AssppTheme.surface)
+            .confirmationDialog("Delete all downloaded IPA files?", isPresented: $showDeleteAllConfirmation) {
+                Button("Delete All Downloads", role: .destructive) {
+                    Downloads.this.removeAll()
+                }
+            } message: {
+                Text("Individual file deletion stays one tap. Removing the whole library cannot be undone.")
+            }
 
             Section {
+                DisclosureGroup("Advanced · Device & Installation", isExpanded: $showAdvancedSettings) {
                 Text(ProcessInfo.processInfo.hostName)
                     .redacted(reason: .placeholder, isEnabled: vm.demoMode)
                 if editingDeviceId {
@@ -167,8 +177,9 @@ struct SettingView: View {
                         }
                     #endif
                 }
+                }
             } header: {
-                Text("DEVICE & INSTALLATION")
+                Text("ADVANCED")
             } footer: {
                 #if canImport(UIKit)
                     Text("Grant local network permission to install apps. Install and trust the SSL certificate for on-device installation.")
@@ -188,13 +199,13 @@ struct SettingView: View {
             }
 
             Section {
-                Button("Reset", role: .destructive) {
+                Button("Reset Preferences") {
                     showResetConfirmation = true
                 }
             } header: {
-                Text("RESET")
+                Text("PREFERENCES")
             } footer: {
-                Text("This will reset all your settings.")
+                Text("Restores interface preferences only. Apple accounts and downloaded IPAs stay untouched.")
             }
             .listRowBackground(AssppTheme.surface)
         }
@@ -202,7 +213,7 @@ struct SettingView: View {
         .scrollContentBackground(.hidden)
         .background(AssppTheme.background)
         .tint(AssppTheme.accent)
-        .navigationTitle("Settings")
+        .navigationTitle("")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 NavigationLink {
@@ -212,24 +223,22 @@ struct SettingView: View {
                 }
             }
         }
-        .alert("Reset Application", isPresented: $showResetConfirmation) {
-            Button("Reset", role: .destructive) {
-                try? FileManager.default.removeItem(at: documentsDirectory)
-                try? FileManager.default.removeItem(at: temporaryDirectory)
-                #if canImport(UIKit)
-                    UIApplication.shared.perform(#selector(NSXPCConnection.suspend))
+        .alert("Reset Preferences", isPresented: $showResetConfirmation) {
+            Button("Reset Preferences") {
+                vm.demoMode = false
+                #if os(iOS)
+                    autoPrepareDecrypt = false
                 #endif
-                #if canImport(AppKit) && !canImport(UIKit)
-                    NSApp.terminate(nil)
-                #endif
-                Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(1))
-                    exit(0)
+                UserDefaults.standard.removeObject(forKey: "searchKey")
+                UserDefaults.standard.removeObject(forKey: "searchRegion")
+                for key in UserDefaults.standard.dictionaryRepresentation().keys
+                    where key.hasPrefix("Velo.PreferredAccount.") {
+                    UserDefaults.standard.removeObject(forKey: key)
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will reset all your settings and data. The app will close afterwards.")
+            Text("Your downloads, FairPlayed helpers and Apple accounts will be preserved.")
         }
     }
 }

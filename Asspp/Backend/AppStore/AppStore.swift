@@ -34,7 +34,7 @@ class AppStore {
     private var _deviceIdentifier = Persist<String>(
         key: "DeviceIdentifier",
         defaultValue: "",
-        engine: KeychainStorage(service: "wiki.qaq.Asspp.DeviceIdentifier"),
+        engine: KeychainStorage(service: "wiki.qaq.Asspp.DeviceIdentifier", synchronizable: false),
     )
 
     var deviceIdentifier: String {

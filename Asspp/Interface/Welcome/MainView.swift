@@ -189,7 +189,7 @@ struct MainView: View {
                     .tabItem {
                         Label("Downloads", systemImage: "arrow.down.circle")
                     }
-                    .badge(dvm.runningTaskCount) // putting badge inside will not work on iOS versions before 18
+                    .badge(dvm.activeOperationCount) // putting badge inside will not work on iOS versions before 18
                 SearchView()
                     .tabItem { Label("Search", systemImage: "magnifyingglass") }
                 SettingView()
@@ -212,7 +212,7 @@ struct MainView: View {
             TabView {
                 Tab("Accounts", systemImage: "person") { AccountView() }
                 Tab("Downloads", systemImage: "arrow.down.circle") { DownloadView() }
-                    .badge(dvm.runningTaskCount)
+                    .badge(dvm.activeOperationCount)
                 Tab("Search", systemImage: "magnifyingglass") { SearchView() }
                 Tab("Settings", systemImage: "gear") { SettingView() }
             }
@@ -305,3 +305,4 @@ struct AssppCard<Content: View>: View {
             }
     }
 }
+

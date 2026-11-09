@@ -7,14 +7,14 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "4.8.3"
-BUILD = "2026110825"
-IPA_NAME = "Velo-R24-BatchFix-unsigned.ipa"
+VERSION = "5.0.0"
+BUILD = "2026110901"
+IPA_NAME = "Velo-5.0.0-Beta1-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()
     assert 'KeychainStorage(service: "wiki.qaq.Asspp.Accounts")' in store
-    assert 'KeychainStorage(service: "wiki.qaq.Asspp.DeviceIdentifier")' in store
+    assert 'KeychainStorage(service: "wiki.qaq.Asspp.DeviceIdentifier", synchronizable: false)' in store
     assert "No-op retained for existing view call sites." in store
     script = (ROOT / "Resources/AuthFix/build.sh").read_text()
     assert "PRODUCT_BUNDLE_IDENTIFIER=wiki.qaq.Asspp.AuthFix" in script
@@ -29,10 +29,13 @@ def validate_sources():
     assert "AccountDownloadGate" in coordinator
     manager = (ROOT / "Asspp/Backend/Downloader/Downloads.swift").read_text()
     assert "activeTransferIDs" in manager and "finalizingIDs" in manager
+    assert "pendingPreparations" in manager and "activeOperationCount" in manager
+    assert "!finalizingIDs.contains(request.id)" in manager
     quick = (ROOT / "Asspp/Interface/Search/QuickDownloadButton.swift").read_text()
     assert "Free License Required" not in quick
     assert "acquireFreeLicense" not in quick
     assert "request.state.percent" in quick and ".trim(from: 0" in quick
+    assert "preferredAccountKey" in quick and "pendingPreparation" in quick
     downloads_view = (ROOT / "Asspp/Interface/Download/DownloadView.swift").read_text()
     assert "selectedIDs" in downloads_view and "prepareBatch" in downloads_view
     decryptor = (ROOT / "Asspp/Interface/Download/PackageView.swift").read_text()
@@ -45,6 +48,18 @@ def validate_sources():
     downloads_view = (ROOT / "Asspp/Interface/Download/DownloadView.swift").read_text()
     assert "deleteImmediately(id: req.id)" in downloads_view
     assert 'confirmationDialog("Delete this download?"' not in downloads_view
+    assert "decryptor.isPreparingBatch" in downloads_view and "selectedIDs.removeAll()" in downloads_view
+    assert "vm.pendingPreparations" in downloads_view
+    assert "estimatedExtraBytes" in decryptor
+    assert "running.isEmpty" in decryptor
+    search = (ROOT / "Asspp/Interface/Search/SearchView.swift").read_text()
+    assert "searchTask?.cancel()" in search and "latestSearchID == searchID" in search
+    assert "cachedResults" in search
+    storage = (ROOT / "Asspp/Extension/PublishedPersist.swift").read_text()
+    assert "synchronizedLegacy" in storage and "isExcludedFromBackup" in storage
+    assert "completeUntilFirstUserAuthentication" in storage
+    settings = (ROOT / "Asspp/Interface/Setting/SettingView.swift").read_text()
+    assert "Reset Preferences" in settings and "removeItem(at: documentsDirectory)" not in settings
     fairplayed_patch = (ROOT / "Resources/FairPlayed/auto-export-and-share.patch").read_text()
     assert "Velo-Decrypted-Batch.zip" in fairplayed_patch
     assert "successfulIPAs.count != expected" in fairplayed_patch
@@ -60,7 +75,7 @@ def validate_sources():
         code = (ROOT / ("Asspp/Interface/" + name + ".swift")).read_text()
         assert "ASS•PP" not in code, name
     assert not (ROOT / "Asspp/Backend/Decryption/DirectFairPlayed.swift").exists()
-    print("PASS R18 core, R20 transport, Velo UI, guarded deletion, two transfers, batch helper ZIP")
+    print("PASS Velo 5.0 smart-core source, guarded deletion, searchable download stages, batch-space check")
 
 def validate_archive():
     spec = importlib.util.spec_from_file_location("r17_checks", ROOT / "Resources/R17/verify_release.py")
@@ -81,7 +96,7 @@ def validate_archive():
     path = ROOT / "artifacts/build-info.json"
     report = json.loads(path.read_text())
     report.update(
-        release="Velo on R18 core",
+        release="Velo 5.0 Beta 1 on stable R18/R20 core",
         displayName="Velo",
         preservesBundleIdentifier=True,
         quickDownloadFromSearch=True,
@@ -100,6 +115,11 @@ def validate_archive():
         batchPackagingFix="Only count direct embedded app Info.plist, ignore nested frameworks",
         deleteConfirmation=False,
         deviceTesting="Deletion and multiple iPhone downloads require device verification",
+        searchCache="180-second in-memory result cache, stale searches cancelled",
+        appStorePreparation="Observable request stages before signed IPA URL is ready",
+        keychainMigration="Device GUID migrated to non-synchronizable local keychain storage",
+        preflightStorage="Batch helper estimates temporary disk space before extraction",
+        settingsReset="Preferences only; downloaded IPAs and Apple accounts preserved",
     )
     path.write_text(json.dumps(report, indent=2) + "\n")
     print("PASS signed-helper template, IPA metadata, icon catalog and archive integrity")

@@ -27,7 +27,7 @@ extension AppStore {
             logger.info("authentication successful for user")
             return userAccount
         } catch {
-            logger.error("authentication failed for user: \(error.localizedDescription)")
+            logger.error("authentication failed for user: \(type(of: error))")
             throw error
         }
     }
@@ -51,7 +51,7 @@ extension AppStore {
             logger.info("account rotation successful for user id: \(id)")
             return updatedAccount
         } catch {
-            logger.error("account rotation failed for user id: \(id): \(error.localizedDescription)")
+            logger.error("account rotation failed: \(type(of: error))")
             throw error
         }
     }

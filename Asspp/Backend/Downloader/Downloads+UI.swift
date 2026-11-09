@@ -66,6 +66,17 @@ struct DownloadRequestIdentity: Hashable {
     let version: String?
 }
 
+enum DownloadRequestStage: String {
+    case connecting = "Connecting to App Store"
+    case acquiringFreeLicense = "Acquiring free license"
+    case preparingTransfer = "Preparing download"
+}
+
+struct DownloadPreparationStatus {
+    let appName: String
+    let stage: DownloadRequestStage
+}
+
 /// Apple account cookies and purchase/download tokens are mutable. In particular,
 /// AppStore.withAccount reads a value, awaits a network operation, then writes
 /// it back. Overlapping requests for different apps on the same Apple ID can
@@ -118,6 +129,8 @@ extension Downloads {
             try await existing.value
             return
         }
+        pendingPreparations[key] = .init(appName: package.software.name, stage: .connecting)
+        let startedAt = CFAbsoluteTimeGetCurrent()
         let task = Task { @MainActor in
             await AccountDownloadGate.shared.acquire(accountID)
             // Defer is synchronous; scheduling this release still preserves
@@ -134,6 +147,7 @@ extension Downloads {
                     guard FreeLicensePolicy.shouldAcquire(price: package.software.price) else {
                         throw ApplePackageError.licenseRequired
                     }
+                    pendingPreparations[key] = .init(appName: package.software.name, stage: .acquiringFreeLicense)
                     logger.info("Free app lacks a license; acquiring and resuming requested download.")
                     do {
                         try await ApplePackage.Purchase.purchase(account: &account.account, app: package.software)
@@ -151,6 +165,7 @@ extension Downloads {
                     // already-owned response; no unbounded request loops.
                     downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
                 }
+                pendingPreparations[key] = .init(appName: package.software.name, stage: .preparingTransfer)
                 let request = try Downloads.this.add(request: .init(
                     account: account,
                     package: package,
@@ -160,7 +175,11 @@ extension Downloads {
             }
         }
         pendingDownloadRequests[key] = task
-        defer { pendingDownloadRequests[key] = nil }
+        defer {
+            pendingDownloadRequests[key] = nil
+            pendingPreparations[key] = nil
+            logger.info("Store request finished after \(Int(CFAbsoluteTimeGetCurrent() - startedAt))s")
+        }
         try await task.value
     }
 }

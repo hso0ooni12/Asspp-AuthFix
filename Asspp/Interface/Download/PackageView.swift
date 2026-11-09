@@ -314,7 +314,7 @@ final class DecryptionCenter {
     }
 
     func prepare(_ manifest: PackageManifest) {
-        guard manifest.completed, running.insert(manifest.id).inserted else { return }
+        guard manifest.completed, !isPreparingBatch, running.insert(manifest.id).inserted else { return }
         statuses[manifest.id] = .preparing
         let input = manifest.targetLocation
         let bundleID = manifest.package.software.bundleID
@@ -357,6 +357,10 @@ final class DecryptionCenter {
     func prepareBatch(_ manifests: [PackageManifest]) {
         let selected = manifests.filter(\.completed)
         guard !selected.isEmpty, !isPreparingBatch else { return }
+        guard !selected.contains(where: { running.contains($0.id) }) else {
+            batchError = "Wait for the individual app preparation to finish, then retry the batch."
+            return
+        }
         if selected.count == 1 {
             prepare(selected[0])
             return
@@ -414,7 +418,7 @@ final class DecryptionCenter {
     }
 
     func clearPreparedHelpers() {
-        guard !isPreparingBatch else { return }
+        guard !isPreparingBatch, running.isEmpty else { return }
         for name in ["Prepared", "Signed", "Exports"] {
             let dir = documentsDirectory.appendingPathComponent("FairPlayed/\(name)", isDirectory: true)
             let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
@@ -550,6 +554,18 @@ enum FairPlayedHelper {
         guard inputs.count > 1,
               let shell = Bundle.main.url(forResource: "FairPlayed-shell", withExtension: "zip")
         else { throw PreparationError.missingShell }
+        // Decompression and re-signing use real filesystem space, not only the
+        // source IPA's compressed size. Fail before modifying any input files.
+        let sourceSize = inputs.reduce(Int64(0)) { sum, entry in
+            let size = (try? entry.downloadedIPA.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return sum + Int64(max(size, 0))
+        }
+        let estimatedExtraBytes = min(sourceSize, Int64.max / 4) * 3 + 256 * 1024 * 1024
+        if let available = try? documentsDirectory.resourceValues(forKeys:
+            [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
+           available < estimatedExtraBytes {
+            throw PreparationError.insufficientSpace(needed: estimatedExtraBytes, available: available)
+        }
         let root = fm.temporaryDirectory.appendingPathComponent("FairPlayedBatch-" + UUID().uuidString,
                                                                   isDirectory: true)
         defer { try? fm.removeItem(at: root) }
@@ -695,6 +711,7 @@ enum FairPlayedHelper {
         case missingShell, missingDownload, notIPA, invalidShell
         case bundleMismatch, invalidLicense, unsafeArchive, emptyPayload
         case batchArchiveMismatch(expected: Int, found: Int)
+        case insufficientSpace(needed: Int64, available: Int64)
 
         var errorDescription: String? {
             switch self {
@@ -708,6 +725,8 @@ enum FairPlayedHelper {
             case .emptyPayload: "The prepared FairPlayed IPA has no embedded app."
             case let .batchArchiveMismatch(expected, found):
                 "Batch IPA verification found \(found) of \(expected) embedded apps."
+            case let .insufficientSpace(needed, available):
+                "Not enough storage to prepare this batch. Estimated temporary space: \(ByteCountFormatter.string(fromByteCount: needed, countStyle: .file)); available: \(ByteCountFormatter.string(fromByteCount: available, countStyle: .file)). Free space or select fewer apps."
             }
         }
     }

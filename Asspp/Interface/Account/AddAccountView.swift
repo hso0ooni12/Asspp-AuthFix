@@ -110,7 +110,7 @@ struct AddAccountView: View {
                         logger.info("authentication successful for user")
                         dismiss()
                     } catch {
-                        logger.error("authentication failed: \(error.localizedDescription)")
+                        logger.error("authentication failed: \(type(of: error))")
                         self.error = error
                         if case ApplePackage.AuthenticationError.verificationCodeRequired = error {
                             codeRequired = true

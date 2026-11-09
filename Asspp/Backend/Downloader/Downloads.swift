@@ -38,6 +38,10 @@ class Downloads {
     @ObservationIgnored
     var pendingDownloadRequests: [DownloadRequestIdentity: Task<Void, Error>] = [:]
 
+    /// Observable metadata/license requests become visible immediately, even
+    /// before Apple returns a signed IPA URL and a PackageManifest can exist.
+    var pendingPreparations: [DownloadRequestIdentity: DownloadPreparationStatus] = [:]
+
     private static let speedFormatter: ByteCountFormatter = {
         let fmt = ByteCountFormatter()
         fmt.allowedUnits = .useAll
@@ -62,6 +66,10 @@ class Downloads {
     /// sidebar, and AppDelegate observers and re-render the whole TabView.
     /// Refresh it only when a status actually transitions.
     private(set) var runningTaskCount: Int = 0
+
+    var activeOperationCount: Int {
+        runningTaskCount + pendingPreparations.count
+    }
 
     private func refreshRunningTaskCount() {
         runningTaskCount = manifests.count(where: {
@@ -271,7 +279,7 @@ class Downloads {
         queuedTransferIDs.removeAll { $0 == request.id }
         // Digger is not guaranteed to retain a task for an already-completed
         // download. Never cancel a stale URL when deleting a finished IPA.
-        if activeTransferIDs.contains(request.id) {
+        if activeTransferIDs.contains(request.id), !finalizingIDs.contains(request.id) {
             DiggerManager.shared.cancelTask(for: request.url)
         }
         registeredCallbacks.remove(request.id)

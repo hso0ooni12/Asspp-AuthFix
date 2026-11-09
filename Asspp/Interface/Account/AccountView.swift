@@ -212,7 +212,7 @@ struct AccountView: View {
                 .navigationDestination(for: AppStore.UserAccount.ID.self) { id in
                     AccountDetailView(accountId: id)
                 }
-                .navigationTitle("Accounts")
+                .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem {

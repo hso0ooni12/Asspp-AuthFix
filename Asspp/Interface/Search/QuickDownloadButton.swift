@@ -15,6 +15,14 @@ struct QuickDownloadButton: View {
     @State private var selectedAccount: String?
 
     private var accounts: [AppStore.UserAccount] { store.eligibleAccounts(for: region) }
+    private var preferredAccountKey: String { "Velo.PreferredAccount.\(region)" }
+
+    private var pendingPreparation: DownloadPreparationStatus? {
+        downloads.pendingPreparations.first(where: {
+            $0.key.bundleID == package.software.bundleID &&
+                $0.key.version == package.externalVersionID
+        })?.value
+    }
 
     var body: some View {
         Group {
@@ -52,6 +60,14 @@ struct QuickDownloadButton: View {
                 .accessibilityLabel(request.completed ? "Download complete" :
                     "Downloading, \(Int(request.state.percent * 100)) percent. Show download")
                 .buttonStyle(.bordered)
+            } else if let pendingPreparation {
+                HStack(spacing: 5) {
+                    ProgressView().tint(AssppTheme.accent).controlSize(.mini)
+                    Text("Preparing")
+                        .font(.caption2.bold())
+                }
+                .frame(minWidth: 80, minHeight: 38)
+                .accessibilityLabel(pendingPreparation.stage.rawValue)
             } else {
                 Button(action: selectAccount) {
                     Group {
@@ -68,6 +84,15 @@ struct QuickDownloadButton: View {
                 .tint(AssppTheme.accent)
                 .disabled(requesting)
                 .accessibilityLabel(requesting ? "Preparing download" : "Download IPA")
+                .contextMenu {
+                    if accounts.count > 1 {
+                        ForEach(accounts) { account in
+                            Button(store.demoMode ? "Apple Account" : account.account.email) {
+                                begin(accountID: account.id)
+                            }
+                        }
+                    }
+                }
             }
         }
         .confirmationDialog("Download with", isPresented: $choosingAccount, titleVisibility: .visible) {
@@ -87,7 +112,10 @@ struct QuickDownloadButton: View {
 
     private func selectAccount() {
         guard !requesting else { return }
-        if accounts.count == 1, let account = accounts.first {
+        if let preferred = UserDefaults.standard.string(forKey: preferredAccountKey),
+           accounts.contains(where: { $0.id == preferred }) {
+            begin(accountID: preferred)
+        } else if accounts.count == 1, let account = accounts.first {
             begin(accountID: account.id)
         } else if accounts.isEmpty {
             errorMessage = "Add an Apple Account for \(region) in Accounts to download this app."
@@ -100,6 +128,7 @@ struct QuickDownloadButton: View {
     private func begin(accountID: String) {
         guard !requesting else { return }
         selectedAccount = accountID
+        UserDefaults.standard.set(accountID, forKey: preferredAccountKey)
         requesting = true
         Task {
             defer { requesting = false }

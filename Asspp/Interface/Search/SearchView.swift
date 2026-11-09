@@ -31,6 +31,9 @@ struct SearchView: View {
     @State private var searchType = EntityType.iPhone
 
     @State private var searching = false
+    @State private var searchTask: Task<Void, Never>?
+    @State private var latestSearchID = UUID()
+    @State private var cachedResults: [String: (date: Date, items: [AppStore.AppPackage])] = [:]
     let regionKeys = Array(ApplePackage.Configuration.storeFrontValues.keys.sorted())
 
     @State private var searchError: String?
@@ -73,6 +76,8 @@ struct SearchView: View {
             Label("Type", systemImage: searchType.iconName)
         }
         .onChange(of: searchType) { _, _ in
+            searchTask?.cancel()
+            searching = false
             searchResult = []
         }
     }
@@ -107,6 +112,8 @@ struct SearchView: View {
             Label(searchRegion, systemImage: "globe")
         }
         .onChange(of: searchRegion) { _, _ in
+            searchTask?.cancel()
+            searching = false
             searchResult = []
         }
     }
@@ -197,34 +204,60 @@ struct SearchView: View {
 
     func search() {
         searchKeyFocused = false
+        let query = searchKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+        searchTask?.cancel()
+        let searchID = UUID()
+        latestSearchID = searchID
+        let region = searchRegion
+        let entityType = searchType
+        let cacheKey = "\(region)|\(entityType.rawValue)|\(query.lowercased())"
+        if let cached = cachedResults[cacheKey], Date().timeIntervalSince(cached.date) < 180 {
+            searching = false
+            searchError = nil
+            searchResult = cached.items
+            return
+        }
         searching = true
         searchError = nil
-        logger.info("search: term=\(searchKey) region=\(searchRegion) type=\(searchType.rawValue)")
-        let entityType = searchType
-        Task {
+        logger.info("search: region=\(region) type=\(entityType.rawValue)")
+        searchTask = Task {
             do {
                 var result = try await ApplePackage.Searcher.search(
-                    term: searchKey,
-                    countryCode: searchRegion,
+                    term: query,
+                    countryCode: region,
                     limit: 32,
                     entityType: entityType,
                 )
-                if let app = try? await ApplePackage.Lookup.lookup(
-                    bundleID: searchKey,
-                    countryCode: searchRegion,
-                    entityType: entityType,
-                ) {
+                try Task.checkCancellation()
+                // Bundle-ID lookup is only useful for names with dot segments.
+                // Skipping it for ordinary text saves an unnecessary network call.
+                if query.contains("."), !query.contains(" "),
+                   let app = try? await ApplePackage.Lookup.lookup(
+                       bundleID: query,
+                       countryCode: region,
+                       entityType: entityType
+                   ), !result.contains(where: { $0.bundleID == app.bundleID }) {
                     result.insert(app, at: 0)
                 }
-                logger.info("search completed: \(result.count) results for term=\(searchKey)")
+                try Task.checkCancellation()
+                let items = result.map { AppStore.AppPackage(software: $0, entityType: entityType) }
                 await MainActor.run {
+                    guard latestSearchID == searchID else { return }
                     searching = false
-                    searchResult = result.map { AppStore.AppPackage(software: $0, entityType: entityType) }
+                    searchResult = items
                     searchError = nil
+                    if cachedResults.count >= 20 {
+                        cachedResults.removeAll(keepingCapacity: true)
+                    }
+                    cachedResults[cacheKey] = (Date(), items)
                 }
+            } catch is CancellationError {
+                // A newer search owns the UI. Ignore stale cancellations.
             } catch {
-                logger.error("search failed: term=\(searchKey) error=\(error.localizedDescription)")
+                logger.error("search failed: \(type(of: error))")
                 await MainActor.run {
+                    guard latestSearchID == searchID else { return }
                     searching = false
                     searchResult = []
                     searchError = error.localizedDescription

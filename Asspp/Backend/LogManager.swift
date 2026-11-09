@@ -41,6 +41,24 @@ struct LogManagerHandler: LogHandler {
     var metadata: Logger.Metadata = [:]
     let label: String
 
+    /// Every log destination shares this basic redaction boundary. Stage codes
+    /// remain visible, while email addresses and common credential fields do not.
+    private static func sanitized(_ message: String) -> String {
+        message
+            .replacingOccurrences(
+                of: #"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#,
+                with: "[account]", options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)\b(password|x-token|cookie|authorization|kbsync|dsid|guid)\b\s*[:=]\s*[^,\s]+"#,
+                with: "$1=[redacted]", options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"https?://[^\s]+"#,
+                with: "[network URL]", options: .regularExpression
+            )
+    }
+
     subscript(metadataKey key: String) -> Logger.Metadata.Value? {
         get { metadata[key] }
         set { metadata[key] = newValue }
@@ -55,7 +73,7 @@ struct LogManagerHandler: LogHandler {
         function _: String,
         line _: UInt,
     ) {
-        let text = "[\(level)] [\(label)] \(message)"
+        let text = Self.sanitized("[\(level)] [\(label)] \(message)")
         Swift.print(text)
         LogManager.shared.write(text)
     }
