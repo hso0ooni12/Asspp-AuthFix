@@ -40,7 +40,7 @@ class FileStorage: PersistProvider {
     func set(_ data: Data?, forKey key: String) throws {
         // Atomic write so a crash mid-write cannot truncate persisted state
         // (download manifests, settings) into an undecodable blob.
-        let file = pathForKey(key)
+        var file = pathForKey(key)
         guard let data else {
             if FileManager.default.fileExists(atPath: file.path) {
                 try FileManager.default.removeItem(at: file)
