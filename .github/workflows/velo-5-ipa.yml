@@ -23,6 +23,7 @@ on:
       - "Resources/R13/**"
       - "Asspp/Interface/**"
       - "Asspp/App/**"
+      - "Asspp/Extension/**"
       - "Asspp.xcodeproj/**"
       - ".github/workflows/velo-5-ipa.yml"
   workflow_dispatch:
