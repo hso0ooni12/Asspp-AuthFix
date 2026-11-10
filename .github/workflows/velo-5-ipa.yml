@@ -184,8 +184,10 @@ jobs:
           export GOOS=ios GOARCH=arm64 CGO_ENABLED=1
           export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
           export CC="$(xcrun --sdk iphoneos --find clang)"
-          export CGO_CFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
-          export CGO_LDFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
+          # Host clang defaults to x86_64 on Intel runners. Explicitly target
+          # iOS arm64 for both cgo compilation and its final link step.
+          export CGO_CFLAGS="-target arm64-apple-ios17.0 -isysroot ${SDKROOT}"
+          export CGO_LDFLAGS="-target arm64-apple-ios17.0 -isysroot ${SDKROOT}"
           mkdir -p "${GITHUB_WORKSPACE}/.ci-cache"
           go build -trimpath -buildmode=c-archive -o "${GITHUB_WORKSPACE}/.ci-cache/libR3KBSync.a" ./cmd/r3bridge
           test -s "${GITHUB_WORKSPACE}/.ci-cache/libR3KBSync.a"
