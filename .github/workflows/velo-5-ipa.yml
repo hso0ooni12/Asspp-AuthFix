@@ -1,8 +1,8 @@
-name: Velo 5.0 Beta 1 - Smart Core
+name: Velo 5.1 - Monochrome Native
 
 on:
   push:
-    branches: [velo-v5-development]
+    branches: [velo-v5-development, velo-v5-1-monochrome]
     paths:
       - "Asspp/Backend/AppStore/**"
       - "Asspp/Interface/Download/PackageView.swift"
@@ -11,6 +11,7 @@ on:
       - "Resources/R3/KBSyncBridge/**"
       - "Resources/FairPlayed/one-page-stub.patch"
       - "Resources/FairPlayed/auto-export-and-share.patch"
+      - "Resources/FairPlayed/monochrome-export-picker.patch"
       - "Resources/FairPlayed/helper-icon.jpg.base64"
       - "Asspp/Interface/Welcome/MainView.swift"
       - "Asspp/Interface/Download/DownloadView.swift"
@@ -83,6 +84,8 @@ jobs:
             Asspp/Interface/Search/SearchView.swift \
             Asspp/Interface/Search/QuickDownloadButton.swift \
             Asspp/Interface/Setting/SettingView.swift \
+            Asspp/Interface/Welcome/MainView.swift \
+            Asspp/Interface/Account/AccountView.swift \
             Asspp/Extension/PublishedPersist.swift; do
             swiftc -frontend -parse "${source}"
           done
@@ -95,7 +98,17 @@ jobs:
             Resources/R18/DownloadPreparationChecks.swift \
             -o "${RUNNER_TEMP}/download-preparation-checks"
           "${RUNNER_TEMP}/download-preparation-checks"
+      - name: Restore pinned native build cache
+        id: native_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            Asspp/FairPlayed-shell.zip
+            .ci-cache/libR3KBSync.a
+            .ci-cache/libunicorn.a
+          key: velo-5.1-macos26-native-${{ hashFiles('Resources/FairPlayed/**', 'Resources/R3/KBSyncBridge/**', 'Resources/Velo/make_icon.swift') }}
       - name: Build pinned FairPlayed engine and embed helper shell
+        if: steps.native_cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -107,6 +120,9 @@ jobs:
           git -C "${RUNNER_TEMP}/FairPlayed" apply --check "${GITHUB_WORKSPACE}/Resources/FairPlayed/auto-export-and-share.patch"
           git -C "${RUNNER_TEMP}/FairPlayed" apply "${GITHUB_WORKSPACE}/Resources/FairPlayed/auto-export-and-share.patch"
           grep -F 'autoExportStarted' "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed/main.m"
+          git -C "${RUNNER_TEMP}/FairPlayed" apply --check "${GITHUB_WORKSPACE}/Resources/FairPlayed/monochrome-export-picker.patch"
+          git -C "${RUNNER_TEMP}/FairPlayed" apply "${GITHUB_WORKSPACE}/Resources/FairPlayed/monochrome-export-picker.patch"
+          grep -F 'FPExportPickerController' "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed/main.m"
           xcodebuild \
             -project "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed.xcodeproj" \
             -scheme FairPlayed -configuration Release \
@@ -116,9 +132,8 @@ jobs:
             build > "${RUNNER_TEMP}/fairplayed-build.log" 2>&1 || { tail -120 "${RUNNER_TEMP}/fairplayed-build.log"; exit 1; }
           shell_app="${RUNNER_TEMP}/FairPlayedBuild/Build/Products/Release-iphoneos/FairPlayed.app"
           test -s "${shell_app}/FairPlayed"
-          # Give every generated FairPlayed helper one permanent, polished icon.
-          base64 -D -i Resources/FairPlayed/helper-icon.jpg.base64 -o "${RUNNER_TEMP}/FairPlayedIcon.jpg"
-          sips -s format png "${RUNNER_TEMP}/FairPlayedIcon.jpg" --out "${shell_app}/FairPlayedIcon.png" > /dev/null
+          # Match Velo's single-color identity in every generated helper.
+          swift Resources/Velo/make_icon.swift "${shell_app}/FairPlayedIcon.png"
           test -s "${shell_app}/FairPlayedIcon.png"
           icon_plist="${shell_app}/Info.plist"
           /usr/libexec/PlistBuddy -c 'Delete :CFBundleIcons' "${icon_plist}" 2>/dev/null || true
@@ -133,6 +148,7 @@ jobs:
           unzip -tq Asspp/FairPlayed-shell.zip
           echo "Pinned FairPlayed shell bundled into Asspp without user file selection"
       - name: Build pinned iOS arm64 KBSync bridge
+        if: steps.native_cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -146,9 +162,11 @@ jobs:
           export CC="$(xcrun --sdk iphoneos --find clang)"
           export CGO_CFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
           export CGO_LDFLAGS="-isysroot ${SDKROOT} -miphoneos-version-min=17.0"
-          go build -trimpath -buildmode=c-archive -o "${RUNNER_TEMP}/libR3KBSync.a" ./cmd/r3bridge
-          test -s "${RUNNER_TEMP}/libR3KBSync.a"
+          mkdir -p "${GITHUB_WORKSPACE}/.ci-cache"
+          go build -trimpath -buildmode=c-archive -o "${GITHUB_WORKSPACE}/.ci-cache/libR3KBSync.a" ./cmd/r3bridge
+          test -s "${GITHUB_WORKSPACE}/.ci-cache/libR3KBSync.a"
       - name: Build pinned Unicorn TCI no-JIT static library for iOS
+        if: steps.native_cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -173,6 +191,8 @@ jobs:
           xcrun nm -g "${archive}" > "${RUNNER_TEMP}/r6-tci-exports.txt"
           grep -F " _uc_version" "${RUNNER_TEMP}/r6-tci-exports.txt" > /dev/null
           grep -F " _uc_emu_start" "${RUNNER_TEMP}/r6-tci-exports.txt" > /dev/null
+          mkdir -p .ci-cache
+          cp "${archive}" .ci-cache/libunicorn.a
       - name: Generate modern Velo app icon in every required size
         shell: bash
         run: |
@@ -187,20 +207,28 @@ jobs:
           for size in 16 32 64 128 256 512; do
             sips -s format png -z "$size" "$size" "$src" --out "$icons/asspp_${size}.png" >/dev/null
           done
+      - name: Verify cached native components
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s Asspp/FairPlayed-shell.zip
+          test -s .ci-cache/libR3KBSync.a
+          test -s .ci-cache/libunicorn.a
+          unzip -tq Asspp/FairPlayed-shell.zip
       - name: Build Velo unsigned IPA from stable R18 core
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          R3_KBSYNC_ARCHIVE: ${{ runner.temp }}/libR3KBSync.a
-          R6_TCI_ARCHIVE: ${{ runner.temp }}/r6-tci-build/libunicorn.a
+          R3_KBSYNC_ARCHIVE: ${{ github.workspace }}/.ci-cache/libR3KBSync.a
+          R6_TCI_ARCHIVE: ${{ github.workspace }}/.ci-cache/libunicorn.a
         run: |
           set -euo pipefail
-          sed -i '' -e 's/4.2.7/5.0.0/g' -e 's/2026110705/2026110901/g' Resources/AuthFix/build.sh
+          sed -i '' -e 's/4.2.7/5.1.0/g' -e 's/2026110705/2026111001/g' Resources/AuthFix/build.sh
           bash Resources/AuthFix/build.sh
-          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.0.0-Beta1-unsigned.ipa
-          shasum -a 256 artifacts/Velo-5.0.0-Beta1-unsigned.ipa > artifacts/Velo-5.0.0-Beta1-unsigned.ipa.sha256
-          unzip -Z -1 artifacts/Velo-5.0.0-Beta1-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
-          unzip -p artifacts/Velo-5.0.0-Beta1-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.1.0-Monochrome-unsigned.ipa
+          shasum -a 256 artifacts/Velo-5.1.0-Monochrome-unsigned.ipa > artifacts/Velo-5.1.0-Monochrome-unsigned.ipa.sha256
+          unzip -Z -1 artifacts/Velo-5.1.0-Monochrome-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
+          unzip -p artifacts/Velo-5.1.0-Monochrome-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -tq "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayed'
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayedIcon.png'
@@ -223,10 +251,10 @@ jobs:
       - name: Upload Velo IPA and diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: Velo-5.0.0-Beta1-unsigned
+          name: Velo-5.1.0-Monochrome-unsigned
           path: |
-            artifacts/Velo-5.0.0-Beta1-unsigned.ipa
-            artifacts/Velo-5.0.0-Beta1-unsigned.ipa.sha256
+            artifacts/Velo-5.1.0-Monochrome-unsigned.ipa
+            artifacts/Velo-5.1.0-Monochrome-unsigned.ipa.sha256
             artifacts/build-info.json
             artifacts/transport-tests.log
             artifacts/sap-setup-probe-result.txt

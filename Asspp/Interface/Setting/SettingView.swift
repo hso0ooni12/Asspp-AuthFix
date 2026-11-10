@@ -15,6 +15,7 @@ import SwiftUI
 struct SettingView: View {
     @Environment(\.openURL) private var openURL
     @State private var vm = AppStore.this
+    @AppStorage("Velo.Appearance") private var appearance = "system"
     #if os(iOS)
         @AppStorage("Asspp.AutoPrepareDecrypt") private var autoPrepareDecrypt = false
     #endif
@@ -49,17 +50,13 @@ struct SettingView: View {
 
     private var formContent: some View {
         Form {
-            Section {
-                AssppScreenHeader(
-                    eyebrow: "VELO  /  CONTROL CENTER",
-                    title: "Settings",
-                    subtitle: "Simple controls. Advanced options when needed.",
-                    symbol: "slider.horizontal.3"
-                )
-                .padding(.vertical, 6)
+            Section("APPEARANCE") {
+                Picker("Appearance", selection: $appearance) {
+                    Text("Automatic").tag("system")
+                    Text("Light").tag("light")
+                    Text("Dark").tag("dark")
+                }
             }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 4, trailing: 20))
 
             #if os(iOS)
                 Section {
@@ -213,7 +210,7 @@ struct SettingView: View {
         .scrollContentBackground(.hidden)
         .background(AssppTheme.background)
         .tint(AssppTheme.accent)
-        .navigationTitle("")
+        .navigationTitle("Settings")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 NavigationLink {
@@ -226,6 +223,7 @@ struct SettingView: View {
         .alert("Reset Preferences", isPresented: $showResetConfirmation) {
             Button("Reset Preferences") {
                 vm.demoMode = false
+                appearance = "system"
                 #if os(iOS)
                     autoPrepareDecrypt = false
                 #endif

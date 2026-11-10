@@ -7,9 +7,9 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "5.0.0"
-BUILD = "2026110901"
-IPA_NAME = "Velo-5.0.0-Beta1-unsigned.ipa"
+VERSION = "5.1.0"
+BUILD = "2026111001"
+IPA_NAME = "Velo-5.1.0-Monochrome-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()
@@ -62,6 +62,9 @@ def validate_sources():
     assert "Reset Preferences" in settings and "removeItem(at: documentsDirectory)" not in settings
     fairplayed_patch = (ROOT / "Resources/FairPlayed/auto-export-and-share.patch").read_text()
     assert "Velo-Decrypted-Batch.zip" in fairplayed_patch
+    export_picker = (ROOT / "Resources/FairPlayed/monochrome-export-picker.patch").read_text()
+    assert "FPExportPickerController" in export_picker
+    assert "Select Individual IPAs" in export_picker
     assert "successfulIPAs.count != expected" in fairplayed_patch
     auth = (ROOT / "Asspp/Interface/Account/AddAccountView.swift").read_text()
     assert "prepareSecureConnection" in auth and "setupTask.value" in auth
@@ -75,7 +78,7 @@ def validate_sources():
         code = (ROOT / ("Asspp/Interface/" + name + ".swift")).read_text()
         assert "ASS•PP" not in code, name
     assert not (ROOT / "Asspp/Backend/Decryption/DirectFairPlayed.swift").exists()
-    print("PASS Velo 5.0 smart-core source, guarded deletion, searchable download stages, batch-space check")
+    print("PASS Velo 5.1 native UI, progressive storefront search, safe batch export and download core")
 
 def validate_archive():
     spec = importlib.util.spec_from_file_location("r17_checks", ROOT / "Resources/R17/verify_release.py")
@@ -96,7 +99,7 @@ def validate_archive():
     path = ROOT / "artifacts/build-info.json"
     report = json.loads(path.read_text())
     report.update(
-        release="Velo 5.0 Beta 1 on stable R18/R20 core",
+        release="Velo 5.1 Monochrome on stable R18/R20 core",
         displayName="Velo",
         preservesBundleIdentifier=True,
         quickDownloadFromSearch=True,
@@ -110,12 +113,16 @@ def validate_archive():
         guardedDeletion=True,
         concurrentDownloads="Two byte transfers, serialized metadata per account",
         progressInSearch=True,
-        bulkExport="One unsigned FairPlayed helper for multiple apps; one decrypted ZIP after opening",
+        bulkExport="One unsigned FairPlayed helper; ZIP or selected individual decrypted IPAs",
         batchVerification="All selected apps must decrypt completely before sharing group ZIP",
         batchPackagingFix="Only count direct embedded app Info.plist, ignore nested frameworks",
         deleteConfirmation=False,
         deviceTesting="Deletion and multiple iPhone downloads require device verification",
         searchCache="180-second in-memory result cache, stale searches cancelled",
+        globalSearch="All Storefronts with progressive 8-country batches and region-aware Get",
+        appearance="Semantic monochrome, Automatic/Light/Dark",
+        helperExportPicker=True,
+        nativeBuildCache="Pinned FairPlayed, KBSync and Unicorn outputs cached by source hash",
         appStorePreparation="Observable request stages before signed IPA URL is ready",
         keychainMigration="Device GUID migrated to non-synchronizable local keychain storage",
         preflightStorage="Batch helper estimates temporary disk space before extraction",

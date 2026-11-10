@@ -1,0 +1,282 @@
+diff --git a/FairPlayed/FairPlayed/main.m b/FairPlayed/FairPlayed/main.m
+index d5e14c6..979a0e4 100644
+--- a/FairPlayed/FairPlayed/main.m
++++ b/FairPlayed/FairPlayed/main.m
+@@ -34,6 +34,9 @@ static NSString *WorkDir(void) {
+ 
+ #pragma mark - runner
+ 
++// Only fully verified files from the latest export may appear in the picker.
++static NSArray<NSString *> *gLatestExportedIPAs;
++
+ @interface FPRunner : NSObject
+ + (void)runEnvironment;
+ + (void)probeInstalledAppsMatching:(NSString *)filter export:(BOOL)export;
+@@ -41,11 +44,14 @@ static NSString *WorkDir(void) {
+ + (void)processAllDocumentsIPAs;
+ + (void)embeddedExperiment;
+ + (NSString *)embeddedExport;
+++ (NSArray<NSString *> *)latestExportedIPAs;
+ + (void)copyTree:(NSString *)src to:(NSString *)dst skipped:(NSMutableArray *)skipped;
+ @end
+ 
+ @implementation FPRunner
+ 
+++ (NSArray<NSString *> *)latestExportedIPAs { return gLatestExportedIPAs ?: @[]; }
++
+ + (NSArray<NSString *> *)machOsUnder:(NSString *)root {
+     NSMutableArray *out = [NSMutableArray array];
+     NSDirectoryEnumerator *en = [[NSFileManager defaultManager] enumeratorAtPath:root];
+@@ -410,6 +416,7 @@ static NSString *WorkDir(void) {
+ // written into a container copy of the app, and the result is zipped into Documents/Decrypted/<name>-decrypted.ipa.
+ + (NSString *)embeddedExport {
+     NSFileManager *fm = NSFileManager.defaultManager;
++    gLatestExportedIPAs = nil;
+     NSString *root = [self embeddedRoot];
+     NSArray<NSString *> *names = [fm contentsOfDirectoryAtPath:root error:nil] ?: @[];
+     NSMutableArray<NSString *> *successfulIPAs = [NSMutableArray array];
+@@ -494,7 +501,10 @@ static NSString *WorkDir(void) {
+               (unsigned long)successfulIPAs.count, (unsigned long)expected);
+         return nil;
+     }
+-    if (successfulIPAs.count == 1) return successfulIPAs.firstObject;
++    if (successfulIPAs.count == 1) {
++        gLatestExportedIPAs = [successfulIPAs copy];
++        return successfulIPAs.firstObject;
++    }
+ 
+     NSString *stage = [WorkDir() stringByAppendingPathComponent:@"Velo-Batch-Stage"];
+     [fm removeItemAtPath:stage error:nil];
+@@ -524,6 +534,7 @@ static NSString *WorkDir(void) {
+     }
+     FPLog(@"FP_BATCH complete: %lu apps -> %@", (unsigned long)successfulIPAs.count,
+           archive.lastPathComponent);
++    gLatestExportedIPAs = [successfulIPAs copy];
+     return archive;
+ }
+ 
+@@ -558,6 +569,77 @@ static NSString *WorkDir(void) {
+ 
+ #pragma mark - UI
+ 
++@interface FPExportPickerController : UITableViewController
++@property (nonatomic, copy) NSArray<NSString *> *files;
++@property (nonatomic, strong) NSMutableSet<NSString *> *selectedFiles;
++- (instancetype)initWithFiles:(NSArray<NSString *> *)files;
++@end
++
++@implementation FPExportPickerController
++
++- (instancetype)initWithFiles:(NSArray<NSString *> *)files {
++    self = [super initWithStyle:UITableViewStyleInsetGrouped];
++    if (self) {
++        _files = [files copy];
++        _selectedFiles = [NSMutableSet set];
++        self.title = @"Select IPA Files";
++    }
++    return self;
++}
++
++- (void)viewDidLoad {
++    [super viewDidLoad];
++    self.tableView.allowsMultipleSelection = YES;
++    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc]
++        initWithBarButtonSystemItem:UIBarButtonSystemItemCancel target:self action:@selector(cancel)];
++    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
++        initWithTitle:@"Share" style:UIBarButtonItemStyleDone target:self action:@selector(shareSelected)];
++    self.navigationItem.rightBarButtonItem.enabled = NO;
++    self.navigationController.navigationBar.tintColor = UIColor.labelColor;
++}
++
++- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
++    return (NSInteger)self.files.count;
++}
++
++- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
++    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"IPA"];
++    if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"IPA"];
++    NSString *file = self.files[(NSUInteger)indexPath.row];
++    cell.textLabel.text = file.lastPathComponent.stringByDeletingPathExtension;
++    cell.detailTextLabel.text = @"Decrypted IPA";
++    cell.accessoryType = [self.selectedFiles containsObject:file] ?
++        UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
++    return cell;
++}
++
++- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
++    NSString *file = self.files[(NSUInteger)indexPath.row];
++    if ([self.selectedFiles containsObject:file]) [self.selectedFiles removeObject:file];
++    else [self.selectedFiles addObject:file];
++    self.navigationItem.rightBarButtonItem.enabled = self.selectedFiles.count > 0;
++    [tableView deselectRowAtIndexPath:indexPath animated:YES];
++    [tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
++}
++
++- (void)cancel { [self dismissViewControllerAnimated:YES completion:nil]; }
++
++- (void)shareSelected {
++    NSMutableArray<NSURL *> *files = [NSMutableArray array];
++    for (NSString *path in self.files) {
++        if ([self.selectedFiles containsObject:path] &&
++            [NSFileManager.defaultManager fileExistsAtPath:path]) {
++            [files addObject:[NSURL fileURLWithPath:path]];
++        }
++    }
++    if (!files.count) return;
++    UIActivityViewController *share = [[UIActivityViewController alloc]
++        initWithActivityItems:files applicationActivities:nil];
++    share.popoverPresentationController.barButtonItem = self.navigationItem.rightBarButtonItem;
++    [self presentViewController:share animated:YES completion:nil];
++}
++@end
++
+ @interface FPViewController : UIViewController <UIDocumentPickerDelegate>
+ @property (nonatomic, strong) UITextView *textView;
+ @property (nonatomic, strong) NSString *lastIPA;
+@@ -567,6 +649,7 @@ static NSString *WorkDir(void) {
+ @property (nonatomic, strong) UILabel *statusLabel;
+ @property (nonatomic, strong) UIProgressView *progressView;
+ @property (nonatomic, strong) UIButton *shareButton;
++@property (nonatomic, copy) NSArray<NSString *> *availableIPAs;
+ @property (nonatomic, assign) NSUInteger currentAppIndex;
+ @property (nonatomic, assign) NSUInteger totalAppCount;
+ @end
+@@ -589,7 +672,7 @@ static NSString *WorkDir(void) {
+     root.axis = UILayoutConstraintAxisVertical;
+     root.spacing = 12;
+     if (self.embeddedMode) {
+-        self.view.backgroundColor = [UIColor colorWithRed:0.025 green:0.055 blue:0.13 alpha:1];
++        self.view.backgroundColor = UIColor.systemBackgroundColor;
+         UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"FairPlayedIcon"]];
+         icon.contentMode = UIViewContentModeScaleAspectFit;
+         icon.layer.cornerRadius = 20;
+@@ -612,14 +695,14 @@ static NSString *WorkDir(void) {
+         title.text = embeddedCount > 1 ? @"FairPlayed Batch" : @"FairPlayed";
+         title.textAlignment = NSTextAlignmentCenter;
+         title.font = [UIFont systemFontOfSize:30 weight:UIFontWeightBold];
+-        title.textColor = UIColor.whiteColor;
++        title.textColor = UIColor.labelColor;
+         [root addArrangedSubview:title];
+ 
+         UILabel *subtitle = [[UILabel alloc] init];
+         subtitle.text = @"Automatic IPA Decryption";
+         subtitle.textAlignment = NSTextAlignmentCenter;
+         subtitle.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+-        subtitle.textColor = [UIColor colorWithWhite:0.72 alpha:1];
++        subtitle.textColor = UIColor.secondaryLabelColor;
+         [root addArrangedSubview:subtitle];
+ 
+         self.statusLabel = [[UILabel alloc] init];
+@@ -627,17 +710,18 @@ static NSString *WorkDir(void) {
+         self.statusLabel.textAlignment = NSTextAlignmentCenter;
+         self.statusLabel.numberOfLines = 2;
+         self.statusLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+-        self.statusLabel.textColor = UIColor.whiteColor;
++        self.statusLabel.textColor = UIColor.labelColor;
+         [root addArrangedSubview:self.statusLabel];
+ 
+         self.progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+         self.progressView.progress = 0;
+-        self.progressView.progressTintColor = [UIColor colorWithRed:0.28 green:0.8 blue:1 alpha:1];
+-        self.progressView.trackTintColor = [UIColor colorWithWhite:0.25 alpha:1];
++        self.progressView.progressTintColor = UIColor.labelColor;
++        self.progressView.trackTintColor = UIColor.tertiarySystemFillColor;
+         [root addArrangedSubview:self.progressView];
+ 
+         self.shareButton = [UIButton buttonWithConfiguration:UIButtonConfiguration.filledButtonConfiguration primaryAction:nil];
+-        [self.shareButton setTitle:@"Share Decrypted Files" forState:UIControlStateNormal];
++        [self.shareButton setTitle:@"Export Files" forState:UIControlStateNormal];
++        self.shareButton.tintColor = UIColor.labelColor;
+         [self.shareButton addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];
+         self.shareButton.tag = 3;
+         self.shareButton.enabled = NO;
+@@ -645,18 +729,20 @@ static NSString *WorkDir(void) {
+ 
+         UIButton *retry = [UIButton buttonWithConfiguration:UIButtonConfiguration.tintedButtonConfiguration primaryAction:nil];
+         [retry setTitle:@"Retry Export" forState:UIControlStateNormal];
++        retry.tintColor = UIColor.labelColor;
+         retry.tag = 2;
+         [retry addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];
+         [root addArrangedSubview:retry];
+ 
+         UIButton *details = [UIButton buttonWithConfiguration:UIButtonConfiguration.plainButtonConfiguration primaryAction:nil];
+         [details setTitle:@"Advanced Details" forState:UIControlStateNormal];
++        details.tintColor = UIColor.labelColor;
+         details.tag = 4;
+         [details addTarget:self action:@selector(tap:) forControlEvents:UIControlEventTouchUpInside];
+         [root addArrangedSubview:details];
+ 
+-        self.textView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:1];
+-        self.textView.textColor = UIColor.whiteColor;
++        self.textView.backgroundColor = UIColor.secondarySystemBackgroundColor;
++        self.textView.textColor = UIColor.labelColor;
+         self.textView.layer.cornerRadius = 12;
+         self.textView.hidden = YES;
+         [self.textView.heightAnchor constraintEqualToConstant:250].active = YES;
+@@ -742,6 +828,7 @@ static NSString *WorkDir(void) {
+     if (self.isExporting) return;
+     self.isExporting = YES;
+     self.lastIPA = nil;
++    self.availableIPAs = nil;
+     self.shareButton.enabled = NO;
+     self.progressView.progress = 0;
+     self.statusLabel.text = @"Starting decryption...";
+@@ -753,11 +840,12 @@ static NSString *WorkDir(void) {
+             self.isExporting = NO;
+             if (ipa.length && [NSFileManager.defaultManager fileExistsAtPath:ipa]) {
+                 self.lastIPA = ipa;
++                self.availableIPAs = [FPRunner latestExportedIPAs];
+                 self.progressView.progress = 1;
+                 self.statusLabel.text = @"Decryption complete ✓";
+                 self.shareButton.enabled = YES;
+-                FPLog(@"=== Decryption complete; opening share sheet for %@ ===", ipa.lastPathComponent);
+-                [self shareDecryptedIPAFrom:nil];
++                FPLog(@"=== Decryption complete; offering verified exports for %@ ===", ipa.lastPathComponent);
++                [self showExportChoicesFrom:nil];
+             } else {
+                 self.statusLabel.text = @"Decryption incomplete — review details";
+                 self.textView.hidden = NO;
+@@ -772,6 +860,34 @@ static NSString *WorkDir(void) {
+     });
+ }
+ 
++- (void)showExportChoicesFrom:(UIView *)source {
++    if (self.availableIPAs.count <= 1) {
++        [self shareDecryptedIPAFrom:source];
++        return;
++    }
++    UIAlertController *choices = [UIAlertController alertControllerWithTitle:@"Export Decrypted Apps"
++        message:[NSString stringWithFormat:@"%lu apps ready", (unsigned long)self.availableIPAs.count]
++        preferredStyle:UIAlertControllerStyleActionSheet];
++    [choices addAction:[UIAlertAction actionWithTitle:@"Export All as ZIP"
++        style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
++        [self shareDecryptedIPAFrom:source];
++    }]];
++    [choices addAction:[UIAlertAction actionWithTitle:@"Select Individual IPAs"
++        style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
++        FPExportPickerController *picker = [[FPExportPickerController alloc]
++            initWithFiles:self.availableIPAs];
++        UINavigationController *navigation = [[UINavigationController alloc]
++            initWithRootViewController:picker];
++        [self presentViewController:navigation animated:YES completion:nil];
++    }]];
++    [choices addAction:[UIAlertAction actionWithTitle:@"Cancel"
++        style:UIAlertActionStyleCancel handler:nil]];
++    choices.popoverPresentationController.sourceView = source ?: self.view;
++    choices.popoverPresentationController.sourceRect = source ? source.bounds :
++        CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
++    [self presentViewController:choices animated:YES completion:nil];
++}
++
+ - (void)shareDecryptedIPAFrom:(UIView *)source {
+     if (!self.lastIPA.length || ![NSFileManager.defaultManager fileExistsAtPath:self.lastIPA]) {
+         FPLog(@"No fully decrypted IPA ready to share");
+@@ -800,7 +916,7 @@ static NSString *WorkDir(void) {
+         }
+         case 1: [self background:^{ [FPRunner processAllDocumentsIPAs]; }]; break;
+         case 2: [self exportEmbeddedAndShare]; break;
+-        case 3: [self shareDecryptedIPAFrom:b]; break;
++        case 3: [self showExportChoicesFrom:b]; break;
+         case 4: self.textView.hidden = !self.textView.hidden; break;
+     }
+ }

@@ -34,6 +34,8 @@ struct SearchView: View {
     @State private var searchTask: Task<Void, Never>?
     @State private var latestSearchID = UUID()
     @State private var cachedResults: [String: (date: Date, items: [AppStore.AppPackage])] = [:]
+    @State private var resultRegions: [String: String] = [:]
+    @State private var remainingRegions: [String] = []
     let regionKeys = Array(ApplePackage.Configuration.storeFrontValues.keys.sorted())
 
     @State private var searchError: String?
@@ -79,6 +81,7 @@ struct SearchView: View {
             searchTask?.cancel()
             searching = false
             searchResult = []
+            remainingRegions = []
         }
     }
 
@@ -88,6 +91,12 @@ struct SearchView: View {
 
     func searchRegionView() -> some View {
         Menu {
+            Button {
+                searchRegion = "ALL"
+            } label: {
+                Label("All Stores", systemImage: "globe")
+            }
+            Divider()
             if !possibleRegionKeys.isEmpty {
                 buildPickView(
                     for: possibleRegionKeys,
@@ -109,12 +118,13 @@ struct SearchView: View {
                     .pickerStyle(.inline)
             }
         } label: {
-            Label(searchRegion, systemImage: "globe")
+            Label(searchRegion == "ALL" ? "All Stores" : searchRegion, systemImage: "globe")
         }
         .onChange(of: searchRegion) { _, _ in
             searchTask?.cancel()
             searching = false
             searchResult = []
+            remainingRegions = []
         }
     }
 
@@ -149,16 +159,22 @@ struct SearchView: View {
                 Section(searching ? "Searching..." : "\(searchResult.count) Results") {
                     ForEach(searchResult) { item in
                         HStack(spacing: 12) {
-                            NavigationLink(value: ProductDestination(archive: item, region: searchRegion)) {
+                            NavigationLink(value: ProductDestination(archive: item, region: region(for: item))) {
                                 ArchivePreviewView(archive: item)
                             }
                             .buttonStyle(.plain)
-                            QuickDownloadButton(package: item, region: searchRegion)
+                            QuickDownloadButton(package: item, region: region(for: item))
                         }
                     }
                     .transition(.opacity)
                 }
                 .transition(.opacity)
+            }
+            if searchRegion == "ALL", !remainingRegions.isEmpty {
+                Button("Search More Stores (\(remainingRegions.count) remaining)") {
+                    searchMoreStores()
+                }
+                .disabled(searching)
             }
         }
         .formStyle(.grouped)
@@ -172,7 +188,8 @@ struct SearchView: View {
         .animation(.spring, value: searchResult)
         .onAppear { consumePendingFocus() }
         .task(id: searchRegion + vm.accounts.map(\.id).joined(separator: "|")) {
-            vm.prepareDownloads(region: searchRegion)
+            if searchRegion == "ALL" { vm.prepareDownloads() }
+            else { vm.prepareDownloads(region: searchRegion) }
         }
         .onChange(of: searchFocus.pending) { _, isPending in
             if isPending {
@@ -211,11 +228,32 @@ struct SearchView: View {
         latestSearchID = searchID
         let region = searchRegion
         let entityType = searchType
+        resultRegions = [:]
+        remainingRegions = []
+        searchResult = []
+        if region == "ALL" {
+            // Search account storefronts first, then common storefronts.
+            // Remaining countries can be searched progressively, without
+            // launching hundreds of simultaneous Apple Search requests.
+            let priority = Array(possibleRegion).sorted() +
+                ["SA", "US", "GB", "AE", "BH", "KW", "EG", "IN", "JP", "CN"]
+            var seen = Set<String>()
+            let countries = (priority + regionKeys).filter {
+                regionKeys.contains($0) && seen.insert($0).inserted
+            }
+            remainingRegions = Array(countries.dropFirst(8))
+            searching = true
+            searchError = nil
+            let initial = Array(countries.prefix(8))
+            searchTask = Task { await searchCountries(initial, query: query, type: entityType, id: searchID) }
+            return
+        }
         let cacheKey = "\(region)|\(entityType.rawValue)|\(query.lowercased())"
         if let cached = cachedResults[cacheKey], Date().timeIntervalSince(cached.date) < 180 {
             searching = false
             searchError = nil
             searchResult = cached.items
+            resultRegions = cached.items.reduce(into: [:]) { $0[$1.software.bundleID] = region }
             return
         }
         searching = true
@@ -246,6 +284,7 @@ struct SearchView: View {
                     guard latestSearchID == searchID else { return }
                     searching = false
                     searchResult = items
+                    resultRegions = items.reduce(into: [:]) { $0[$1.software.bundleID] = region }
                     searchError = nil
                     if cachedResults.count >= 20 {
                         cachedResults.removeAll(keepingCapacity: true)
@@ -263,6 +302,69 @@ struct SearchView: View {
                     searchError = error.localizedDescription
                 }
             }
+        }
+    }
+
+    private func region(for item: AppStore.AppPackage) -> String {
+        resultRegions[item.software.bundleID] ?? (searchRegion == "ALL" ? "US" : searchRegion)
+    }
+
+    private func searchMoreStores() {
+        guard !searching, !remainingRegions.isEmpty else { return }
+        let countries = Array(remainingRegions.prefix(8))
+        remainingRegions.removeFirst(countries.count)
+        searching = true
+        searchError = nil
+        let id = latestSearchID
+        let query = searchKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let type = searchType
+        searchTask = Task { await searchCountries(countries, query: query, type: type, id: id) }
+    }
+
+    @MainActor
+    private func searchCountries(_ countries: [String], query: String,
+                                 type: EntityType, id: UUID) async {
+        var failures = 0
+        for country in countries {
+            guard !Task.isCancelled, latestSearchID == id else { return }
+            do {
+                let key = "\(country)|\(type.rawValue)|\(query.lowercased())"
+                let apps: [AppStore.AppPackage]
+                if let cached = cachedResults[key], Date().timeIntervalSince(cached.date) < 180 {
+                    apps = cached.items
+                } else {
+                    var results = try await ApplePackage.Searcher.search(
+                        term: query, countryCode: country, limit: 24, entityType: type
+                    )
+                    if query.contains("."), !query.contains(" "),
+                       let direct = try? await ApplePackage.Lookup.lookup(
+                           bundleID: query, countryCode: country, entityType: type
+                       ), !results.contains(where: { $0.bundleID == direct.bundleID }) {
+                        results.insert(direct, at: 0)
+                    }
+                    apps = results.map { AppStore.AppPackage(software: $0, entityType: type) }
+                    if cachedResults.count >= 40 { cachedResults.removeAll(keepingCapacity: true) }
+                    cachedResults[key] = (Date(), apps)
+                }
+                guard !Task.isCancelled, latestSearchID == id else { return }
+                for app in apps {
+                    // One row per app. Prefer the first storefront where it was
+                    // found, usually an account's own region.
+                    guard !searchResult.contains(where: { $0.software.bundleID == app.software.bundleID }) else { continue }
+                    searchResult.append(app)
+                    resultRegions[app.software.bundleID] = country
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                failures += 1
+                logger.warning("Search storefront request failed for \(country)")
+            }
+        }
+        guard latestSearchID == id else { return }
+        searching = false
+        if failures == countries.count, searchResult.isEmpty {
+            searchError = "Could not search these stores. Try again or choose a region."
         }
     }
 }
@@ -291,123 +393,55 @@ extension SearchView {
     @available(iOS 26.0, *)
     extension SearchView {
         var modernContent: some View {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 15) {
-                    AssppScreenHeader(
-                        eyebrow: "VELO  /  APP STORE",
-                        title: "Discover",
-                        subtitle: "Find apps. Download in one tap.",
-                        symbol: "magnifyingglass"
-                    )
-
-                    AssppCard {
-                        VStack(alignment: .leading, spacing: 15) {
-                            HStack(spacing: 10) {
-                                Image(systemName: "magnifyingglass")
-                                    .foregroundStyle(AssppTheme.accent)
-                                TextField("Search apps or Bundle ID", text: $searchKey)
-                                    .focused($searchKeyFocused)
-                                    .submitLabel(.search)
-                                    .onSubmit(search)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                if !searchKey.isEmpty {
-                                    Button {
-                                        searchKey = ""
-                                        searchResult = []
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(13)
-                            .background(AssppTheme.elevated, in: RoundedRectangle(cornerRadius: 15))
-
-                            HStack(spacing: 10) {
-                                Menu {
-                                    searchTypePicker
-                                } label: {
-                                    Label(searchType.rawValue, systemImage: searchType.iconName)
-                                }
-                                .buttonStyle(.bordered)
-
-                                searchRegionView()
-                                    .buttonStyle(.bordered)
-
-                                Spacer(minLength: 0)
-
-                                Button(action: search) {
-                                    Label("Search", systemImage: "arrow.right")
-                                        .font(.subheadline.bold())
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(searchKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || searching)
-                            }
-                        }
-                    }
-
-                    if let searchError {
-                        Label(searchError, systemImage: "exclamationmark.triangle")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 6)
-                    }
-
-                    if searching {
-                        AssppCard {
-                            HStack(spacing: 12) {
-                                ProgressView().tint(AssppTheme.accent)
-                                Text("Searching the App Store...")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    } else if searchResult.isEmpty {
-                        AssppCard {
-                            VStack(alignment: .leading, spacing: 9) {
-                                Image(systemName: "square.grid.2x2")
-                                    .font(.largeTitle)
-                                    .foregroundStyle(AssppTheme.violet)
-                                Text("Everything starts with a search")
-                                    .font(.headline)
-                                Text("Choose your storefront, type an app name or Bundle ID, and start exploring.")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    } else {
-                        HStack {
-                            Text("SEARCH RESULTS")
-                                .font(.caption.bold())
-                                .tracking(1.5)
-                                .foregroundStyle(.white.opacity(0.6))
-                            Spacer()
-                            Text("\(searchResult.count) apps")
-                                .font(.caption)
-                                .foregroundStyle(AssppTheme.accent)
-                        }
+            List {
+                if let searchError {
+                    Label(searchError, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                }
+                if searchResult.isEmpty && !searching {
+                    ContentUnavailableView.search(text: searchKey)
+                        .listRowBackground(Color.clear)
+                }
+                if !searchResult.isEmpty {
+                    Section("\(searchResult.count) Results") {
                         ForEach(searchResult) { item in
-                            AssppCard {
-                                HStack(spacing: 12) {
-                                    NavigationLink(value: ProductDestination(archive: item, region: searchRegion)) {
-                                        ArchivePreviewView(archive: item)
-                                    }
-                                    .buttonStyle(.plain)
-                                    QuickDownloadButton(package: item, region: searchRegion)
+                            HStack(spacing: 10) {
+                                NavigationLink(value: ProductDestination(archive: item, region: region(for: item))) {
+                                    ArchivePreviewView(archive: item)
                                 }
+                                .buttonStyle(.plain)
+                                if searchRegion == "ALL" {
+                                    Text(region(for: item))
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.secondary)
+                                }
+                                QuickDownloadButton(package: item, region: region(for: item))
                             }
+                            .padding(.vertical, 4)
                         }
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, 32)
+                if searching {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Searching...")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if searchRegion == "ALL", !remainingRegions.isEmpty {
+                    Button("Search More Stores (\(remainingRegions.count) remaining)") {
+                        searchMoreStores()
+                    }
+                    .disabled(searching)
+                }
             }
+            .listStyle(.plain)
+            .searchable(text: $searchKey, prompt: "App or Bundle ID")
+            .searchFocused($searchKeyFocused)
+            .onSubmit(of: .search, search)
             .background(AssppTheme.background)
             .navigationTitle("Search")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { tools }
             .navigationDestination(for: ProductDestination.self) { dest in
                 ProductView(archive: dest.archive, region: dest.region, navigationPath: $navigationPath)
             }
@@ -416,7 +450,8 @@ extension SearchView {
             }
             .onAppear { consumePendingFocus() }
             .task(id: searchRegion + vm.accounts.map(\.id).joined(separator: "|")) {
-                vm.prepareDownloads(region: searchRegion)
+                if searchRegion == "ALL" { vm.prepareDownloads() }
+                else { vm.prepareDownloads(region: searchRegion) }
             }
             .onChange(of: searchFocus.pending) { _, isPending in
                 if isPending { consumePendingFocus() }

@@ -73,10 +73,31 @@ def test_search_and_privacy():
     assert "latestSearchID == searchID" in search
     assert "searchTask?.cancel()" in search
     assert "cachedResults" in search
+    assert 'searchRegion = "ALL"' in search
+    assert "searchMoreStores()" in search
+    assert "resultRegions[app.software.bundleID] = country" in search
+    assert "region: region(for: item)" in search
     auth = source("Asspp/Backend/AppStore/AuthenticationService.swift")
     assert 'logger.error("authentication failed for user: \\(error.localizedDescription)")' not in auth
     logger = source("Asspp/Backend/LogManager.swift")
     assert "[redacted]" in logger
+
+
+def test_monochrome_and_helper_export():
+    main = source("Asspp/Interface/Welcome/MainView.swift")
+    assert ".preferredColorScheme(.dark)" not in main
+    assert "RadialGradient" not in main
+    assert "Color.primary" in main
+    assert 'VeloAppearance.scheme(for: appearance)' in main
+    settings = source("Asspp/Interface/Setting/SettingView.swift")
+    assert 'Text("Automatic").tag("system")' in settings
+    icon = source("Resources/Velo/make_icon.swift")
+    assert "NSColor.black.setFill()" in icon and "NSColor.white.setStroke()" in icon
+    patch = source("Resources/FairPlayed/monochrome-export-picker.patch")
+    assert "FPExportPickerController" in patch
+    assert "Export All as ZIP" in patch and "Select Individual IPAs" in patch
+    assert "gLatestExportedIPAs = [successfulIPAs copy]" in patch
+    assert "UIColor.systemBackgroundColor" in patch
 
 
 if __name__ == "__main__":
@@ -86,6 +107,7 @@ if __name__ == "__main__":
         test_batch_retry_preserves_selection,
         test_user_data_not_erased_by_preferences,
         test_search_and_privacy,
+        test_monochrome_and_helper_export,
     ):
         test()
         print("PASS", test.__name__)

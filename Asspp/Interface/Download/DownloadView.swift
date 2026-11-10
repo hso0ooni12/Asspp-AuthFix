@@ -17,125 +17,74 @@ struct DownloadView: View {
     var body: some View {
         NavigationStack {
             content
-                .navigationTitle("")
-                .navigationBarTitleDisplayMode(.inline)
+                .navigationTitle("Downloads")
         }
     }
 
     private var content: some View {
         List {
-            VStack(alignment: .leading, spacing: 12) {
-                AssppScreenHeader(
-                    eyebrow: "VELO  /  IPA MANAGER",
-                    title: "Downloads",
-                    subtitle: "Downloads, organized.",
-                    symbol: "arrow.down.to.line.compact"
-                )
-                AssppCard {
-                    HStack(spacing: 10) {
-                        summaryMetric("\(vm.manifests.count)", label: "TOTAL", symbol: "square.stack.3d.up")
-                        summaryMetric("\(vm.manifests.filter(\.completed).count)", label: "READY", symbol: "checkmark.seal")
-                        summaryMetric("\(vm.activeOperationCount)", label: "ACTIVE", symbol: "arrow.down.circle")
-                    }
+            HStack {
+                Text("\(vm.manifests.filter(\.completed).count) ready")
+                Spacer()
+                if vm.activeOperationCount > 0 {
+                    Text("\(vm.activeOperationCount) active")
                 }
             }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
 
             if selectionMode {
-                AssppCard {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("\(selectedIDs.count) apps selected")
-                                .font(.headline)
-                            Spacer()
-                            Button("Select All") {
-                                selectedIDs = Set(vm.manifests.filter(\.completed).map(\.id))
-                            }
-                            .font(.subheadline)
-                            Button("Clear") { selectedIDs.removeAll() }
-                                .font(.subheadline)
-                        }
-                        Button {
-                            let chosen = vm.manifests.filter {
-                                $0.completed && selectedIDs.contains($0.id)
-                            }
-                            decryptor.prepareBatch(chosen)
-                        } label: {
-                            Label(selectedIDs.count == 1 ? "Prepare Decryptor" :
-                                    "Prepare One Decryptor (\(selectedIDs.count) Apps)",
-                                  systemImage: "lock.open.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(selectedIDs.isEmpty || decryptor.isPreparingBatch)
-                        Text("Velo builds one FairPlayed IPA for all selected apps. Sign it once; opening it decrypts every app and shares one ZIP of decrypted IPAs.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                HStack {
+                    Text("\(selectedIDs.count) selected")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("All") {
+                        selectedIDs = Set(vm.manifests.filter(\.completed).map(\.id))
                     }
+                    Button("Clear") { selectedIDs.removeAll() }
                 }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             }
             if decryptor.isPreparingBatch {
-                AssppCard {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Embedding \(decryptor.batchCompleted) of \(decryptor.batchTotal) apps")
-                            .font(.subheadline.bold())
-                        ProgressView(value: Double(decryptor.batchCompleted),
-                                     total: Double(max(decryptor.batchTotal, 1)))
-                            .tint(AssppTheme.accent)
-                        Text("Keep Velo open while the single helper is packaged.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Preparing \(decryptor.batchCompleted) / \(decryptor.batchTotal)")
+                    ProgressView(value: Double(decryptor.batchCompleted),
+                                 total: Double(max(decryptor.batchTotal, 1)))
+                        .tint(AssppTheme.accent)
                 }
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
             }
 
             if !vm.pendingPreparations.isEmpty {
                 ForEach(Array(vm.pendingPreparations.keys).sorted(by: { $0.bundleID < $1.bundleID }), id: \.self) { key in
                     if let item = vm.pendingPreparations[key] {
-                        AssppCard {
-                            HStack(spacing: 12) {
-                                ProgressView().tint(AssppTheme.accent)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(item.appName).font(.subheadline.bold())
-                                    Text(item.stage.rawValue)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
+                        HStack(spacing: 12) {
+                            ProgressView().tint(AssppTheme.accent)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.appName).font(.subheadline.weight(.medium))
+                                Text(item.stage.rawValue)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
                     }
                 }
             }
 
             if vm.manifests.isEmpty && vm.pendingPreparations.isEmpty {
-                AssppCard {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Image(systemName: "square.and.arrow.down.on.square")
-                            .font(.system(size: 35))
-                            .foregroundStyle(AssppTheme.accent)
-                        Text("Your downloads will appear here")
-                            .font(.title3.bold())
-                        Text("Find apps in Search or add a direct IPA link to begin.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        NavigationLink {
-                            AddDownloadView()
-                        } label: {
-                            Label("Add Download", systemImage: "plus")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                        }
-                        .buttonStyle(.borderedProminent)
+                ContentUnavailableView {
+                    Label("No Downloads", systemImage: "arrow.down.circle")
+                } description: {
+                    Text("Find an app in Search to begin.")
+                } actions: {
+                    NavigationLink {
+                        AddDownloadView()
+                    } label: {
+                        Text("Add Download")
                     }
+                    .buttonStyle(.borderedProminent)
                 }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
@@ -146,6 +95,22 @@ struct DownloadView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(AssppTheme.background)
+        .safeAreaInset(edge: .bottom) {
+            if selectionMode {
+                Button {
+                    let chosen = vm.manifests.filter { $0.completed && selectedIDs.contains($0.id) }
+                    decryptor.prepareBatch(chosen)
+                } label: {
+                    Text(selectedIDs.count == 1 ? "Prepare Decryptor" : "Prepare \(selectedIDs.count) Apps")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedIDs.isEmpty || decryptor.isPreparingBatch)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .background(.regularMaterial)
+            }
+        }
         .navigationDestination(for: PackageManifest.self) { manifest in
             PackageView(pkg: manifest)
         }
@@ -176,24 +141,6 @@ struct DownloadView: View {
         }
     }
 
-    private func summaryMetric(_ value: String, label: String, symbol: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .foregroundStyle(AssppTheme.accent)
-                .font(.caption)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(value)
-                    .font(.headline.bold().monospacedDigit())
-                    .foregroundStyle(.white)
-                Text(label)
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .tracking(0.7)
-                    .foregroundStyle(.white.opacity(0.5))
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-    }
-
     private var packageList: some View {
         ForEach(vm.manifests, id: \.id) { req in
             HStack(spacing: 12) {
@@ -214,9 +161,7 @@ struct DownloadView: View {
                     deleteImmediately(id: req.id)
                 }
             }
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 7, leading: 18, bottom: 7, trailing: 18))
+                .listRowInsets(EdgeInsets(top: 8, leading: 18, bottom: 8, trailing: 18))
         }
     }
 
@@ -242,8 +187,7 @@ private struct PackageManifestRow: View {
     @State private var shareOriginal: PreparedDecryptionPackage?
 
     var body: some View {
-        AssppCard {
-            VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 10) {
                     NavigationLink(value: manifest) {
                         ArchivePreviewView(archive: manifest.package)
@@ -274,13 +218,13 @@ private struct PackageManifestRow: View {
                             .foregroundStyle(AssppTheme.accent)
                     case .ready:
                         Label("Ready to Sign", systemImage: "checkmark.seal.fill")
-                            .foregroundStyle(.green)
+                        .foregroundStyle(.secondary)
                     case let .failed(message):
                         Button {
                             showPreparationError = true
                         } label: {
                             Label(message, systemImage: "exclamationmark.triangle")
-                                .foregroundStyle(.red)
+                                .foregroundStyle(.primary)
                                 .lineLimit(2)
                         }
                         .buttonStyle(.plain)
@@ -293,7 +237,6 @@ private struct PackageManifestRow: View {
                 .font(.system(.footnote, design: .rounded))
                 .lineLimit(1)
 
-            }
         }
         .contextMenu {
             if manifest.completed {
@@ -346,7 +289,7 @@ private struct PackageManifestRow: View {
                 } label: {
                     Label("Decrypt", systemImage: "lock.open.fill")
                 }
-                .tint(.blue)
+                .tint(.gray)
                 .disabled(decryptor.status(for: manifest) == .preparing)
             }
         }

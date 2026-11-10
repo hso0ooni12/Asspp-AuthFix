@@ -180,6 +180,7 @@ struct MainView: View {
     private struct LegacyTabMainView: View {
         @State var dvm = Downloads.this
         @State private var decryptor = DecryptionCenter.shared
+        @AppStorage("Velo.Appearance") private var appearance = "system"
 
         var body: some View {
             TabView {
@@ -199,7 +200,7 @@ struct MainView: View {
                 AssppActivityShare(items: [item.url])
             }
             .tint(AssppTheme.accent)
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(VeloAppearance.scheme(for: appearance))
         }
     }
 
@@ -207,6 +208,7 @@ struct MainView: View {
     struct NewMainView: View {
         @State var dvm = Downloads.this
         @State private var decryptor = DecryptionCenter.shared
+        @AppStorage("Velo.Appearance") private var appearance = "system"
 
         var body: some View {
             TabView {
@@ -222,34 +224,42 @@ struct MainView: View {
                 AssppActivityShare(items: [item.url])
             }
             .tint(AssppTheme.accent)
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(VeloAppearance.scheme(for: appearance))
         }
     }
 
 
 #endif
 
-// One visual language shared by the four primary screens and the detail flows.
-// Colors intentionally keep readable contrast behind the native iOS 26 glass UI.
+enum VeloAppearance {
+    static func scheme(for value: String) -> ColorScheme? {
+        switch value {
+        case "light": .light
+        case "dark": .dark
+        default: nil
+        }
+    }
+}
+
+// Semantic monochrome surfaces follow the system's Light/Dark appearance.
+// Branding never changes the meaning of system controls or error states.
 enum AssppTheme {
-    static let accent = Color(red: 0.34, green: 0.87, blue: 0.98)
-    static let violet = Color(red: 0.51, green: 0.46, blue: 0.98)
-    static let canvas = Color(red: 0.035, green: 0.055, blue: 0.115)
-    static let surface = Color(red: 0.085, green: 0.115, blue: 0.19)
-    static let elevated = Color(red: 0.12, green: 0.16, blue: 0.25)
-    static let separator = Color.white.opacity(0.095)
+    static let accent = Color.primary
+    static let violet = Color.secondary
+    #if canImport(UIKit)
+        static let canvas = Color(uiColor: .systemBackground)
+        static let surface = Color(uiColor: .secondarySystemGroupedBackground)
+        static let elevated = Color(uiColor: .secondarySystemBackground)
+        static let separator = Color(uiColor: .separator)
+    #else
+        static let canvas = Color(nsColor: .windowBackgroundColor)
+        static let surface = Color(nsColor: .controlBackgroundColor)
+        static let elevated = Color(nsColor: .textBackgroundColor)
+        static let separator = Color(nsColor: .separatorColor)
+    #endif
 
     static var background: some View {
-        ZStack {
-            canvas
-            RadialGradient(
-                colors: [violet.opacity(0.23), accent.opacity(0.045), .clear],
-                center: .topTrailing,
-                startRadius: 10,
-                endRadius: 620
-            )
-        }
-        .ignoresSafeArea()
+        canvas.ignoresSafeArea()
     }
 }
 
@@ -260,30 +270,12 @@ struct AssppScreenHeader: View {
     let symbol: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(eyebrow.uppercased())
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .tracking(1.5)
-                    .foregroundStyle(AssppTheme.accent)
-                Text(title)
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .tracking(-1.2)
-                    .foregroundStyle(.white)
-                Text(subtitle)
-                    .font(.footnote)
-                    .foregroundStyle(.white.opacity(0.68))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 4)
-            Image(systemName: symbol)
-                .font(.system(size: 22, weight: .medium))
-                .foregroundStyle(AssppTheme.accent)
-                .frame(width: 50, height: 50)
-                .background(AssppTheme.accent.opacity(0.11), in: RoundedRectangle(cornerRadius: 18))
-                .overlay(RoundedRectangle(cornerRadius: 18).stroke(AssppTheme.accent.opacity(0.24)))
-        }
-        .padding(.vertical, 6)
+        Text(title)
+            .font(.largeTitle.bold())
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
+            .padding(.vertical, 4)
     }
 }
 
@@ -296,13 +288,9 @@ struct AssppCard<Content: View>: View {
 
     var body: some View {
         content
-            .padding(15)
+            .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AssppTheme.surface, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 23, style: .continuous)
-                    .stroke(AssppTheme.separator, lineWidth: 1)
-            }
+            .background(AssppTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
