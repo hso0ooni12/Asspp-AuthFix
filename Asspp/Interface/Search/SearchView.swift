@@ -23,6 +23,35 @@ final class SearchFieldFocus {
     }
 }
 
+/// A Sendable payload boundary keeps the network workers off the MainActor
+/// without transferring ApplePackage model objects across actor boundaries.
+private struct StorefrontSearchOutcome: Sendable {
+    let position: Int
+    let country: String
+    let encodedApps: Data?
+}
+
+private func fetchStorefront(position: Int, country: String,
+                             query: String, type: EntityType) async -> StorefrontSearchOutcome {
+    do {
+        var results = try await ApplePackage.Searcher.search(
+            term: query, countryCode: country, limit: 24, entityType: type
+        )
+        try Task.checkCancellation()
+        if query.contains("."), !query.contains(" "),
+           let direct = try? await ApplePackage.Lookup.lookup(
+               bundleID: query, countryCode: country, entityType: type
+           ), !results.contains(where: { $0.bundleID == direct.bundleID }) {
+            results.insert(direct, at: 0)
+        }
+        try Task.checkCancellation()
+        let data = try JSONEncoder().encode(results)
+        return StorefrontSearchOutcome(position: position, country: country, encodedApps: data)
+    } catch {
+        return StorefrontSearchOutcome(position: position, country: country, encodedApps: nil)
+    }
+}
+
 struct SearchView: View {
     @AppStorage("searchKey") var searchKey = ""
     @AppStorage("searchRegion") var searchRegion = "US"
@@ -329,40 +358,63 @@ struct SearchView: View {
     private func searchCountries(_ countries: [String], query: String,
                                  type: EntityType, id: UUID) async {
         var failures = 0
-        for country in countries {
+        var pending: [(position: Int, country: String)] = []
+        var known: [String: (index: Int, priority: Int)] = [:]
+        for (index, app) in searchResult.enumerated() {
+            // Results from earlier "Search More" batches always keep priority.
+            known[app.software.bundleID] = (index, -1)
+        }
+
+        for (position, country) in countries.enumerated() {
             guard !Task.isCancelled, latestSearchID == id else { return }
-            do {
-                let key = "\(country)|\(type.rawValue)|\(query.lowercased())"
-                let apps: [AppStore.AppPackage]
-                if let cached = cachedResults[key], Date().timeIntervalSince(cached.date) < 180 {
-                    apps = cached.items
-                } else {
-                    var results = try await ApplePackage.Searcher.search(
-                        term: query, countryCode: country, limit: 24, entityType: type
-                    )
-                    if query.contains("."), !query.contains(" "),
-                       let direct = try? await ApplePackage.Lookup.lookup(
-                           bundleID: query, countryCode: country, entityType: type
-                       ), !results.contains(where: { $0.bundleID == direct.bundleID }) {
-                        results.insert(direct, at: 0)
+            let key = "\(country)|\(type.rawValue)|\(query.lowercased())"
+            if let cached = cachedResults[key], Date().timeIntervalSince(cached.date) < 180 {
+                mergeStorefront(cached.items, country: country, priority: position, known: &known)
+            } else {
+                pending.append((position: position, country: country))
+            }
+        }
+
+        // Three outstanding storefronts at a time avoids slow serial searches
+        // without flooding Apple's API or overwhelming a cellular connection.
+        await withTaskGroup(of: StorefrontSearchOutcome.self) { group in
+            let concurrency = min(3, pending.count)
+            for index in 0..<concurrency {
+                let job = pending[index]
+                group.addTask {
+                    await fetchStorefront(position: job.position, country: job.country,
+                                          query: query, type: type)
+                }
+            }
+            var next = concurrency
+            for await outcome in group {
+                guard !Task.isCancelled, latestSearchID == id else {
+                    group.cancelAll()
+                    break
+                }
+                if let data = outcome.encodedApps,
+                   let software = try? JSONDecoder().decode([ApplePackage.Software].self, from: data) {
+                    let apps = software.map { AppStore.AppPackage(software: $0, entityType: type) }
+                    let key = "\(outcome.country)|\(type.rawValue)|\(query.lowercased())"
+                    if cachedResults.count >= 40,
+                       let oldest = cachedResults.min(by: { $0.value.date < $1.value.date })?.key {
+                        cachedResults.removeValue(forKey: oldest)
                     }
-                    apps = results.map { AppStore.AppPackage(software: $0, entityType: type) }
-                    if cachedResults.count >= 40 { cachedResults.removeAll(keepingCapacity: true) }
                     cachedResults[key] = (Date(), apps)
+                    mergeStorefront(apps, country: outcome.country,
+                                    priority: outcome.position, known: &known)
+                } else {
+                    failures += 1
+                    logger.warning("Search storefront request failed for \(outcome.country)")
                 }
-                guard !Task.isCancelled, latestSearchID == id else { return }
-                for app in apps {
-                    // One row per app. Prefer the first storefront where it was
-                    // found, usually an account's own region.
-                    guard !searchResult.contains(where: { $0.software.bundleID == app.software.bundleID }) else { continue }
-                    searchResult.append(app)
-                    resultRegions[app.software.bundleID] = country
+                if next < pending.count {
+                    let job = pending[next]
+                    group.addTask {
+                        await fetchStorefront(position: job.position, country: job.country,
+                                              query: query, type: type)
+                    }
+                    next += 1
                 }
-            } catch is CancellationError {
-                return
-            } catch {
-                failures += 1
-                logger.warning("Search storefront request failed for \(country)")
             }
         }
         guard latestSearchID == id else { return }
@@ -370,6 +422,32 @@ struct SearchView: View {
         if failures == countries.count, searchResult.isEmpty {
             searchError = "Could not search these stores. Try again or choose a region."
         }
+    }
+
+    @MainActor
+    private func mergeStorefront(_ apps: [AppStore.AppPackage], country: String, priority: Int,
+                                 known: inout [String: (index: Int, priority: Int)]) {
+        var updated = searchResult
+        var changed = false
+        for app in apps {
+            let bundleID = app.software.bundleID
+            if let existing = known[bundleID] {
+                // An account's storefront outranks a later common-region hit,
+                // even if the slower network response arrives afterwards.
+                if priority < existing.priority {
+                    updated[existing.index] = app
+                    known[bundleID] = (existing.index, priority)
+                    resultRegions[bundleID] = country
+                    changed = true
+                }
+            } else {
+                known[bundleID] = (updated.count, priority)
+                updated.append(app)
+                resultRegions[bundleID] = country
+                changed = true
+            }
+        }
+        if changed { searchResult = updated } // One SwiftUI update per storefront.
     }
 }
 

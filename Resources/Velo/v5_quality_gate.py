@@ -75,7 +75,7 @@ def test_search_and_privacy():
     assert "cachedResults" in search
     assert 'searchRegion = "ALL"' in search
     assert "searchMoreStores()" in search
-    assert "resultRegions[app.software.bundleID] = country" in search
+    assert "resultRegions[bundleID] = country" in search
     assert "region: region(for: item)" in search
     auth = source("Asspp/Backend/AppStore/AuthenticationService.swift")
     assert 'logger.error("authentication failed for user: \\(error.localizedDescription)")' not in auth
@@ -132,6 +132,27 @@ def test_native_polish_and_size_controls():
     assert "xcrun strip -x -S" in build and "_R3GenerateKBSync" in build
 
 
+def test_smart_route_and_fast_search():
+    route = source("Asspp/Backend/AppStore/DownloadRouteAdvisor.swift")
+    assert "actor DownloadRouteAdvisor" in route
+    assert "failureThreshold = 2" in route and "10 * 60" in route
+    assert "observations: [String: Observation]" in route
+    service = source("Asspp/Backend/AppStore/StoreDownloadService.swift")
+    assert "shouldTryPreferred(scope: routeScope)" in service
+    assert "fallbackSucceededAfterPreferredFailure(scope: routeScope)" in service
+    assert "preferredSucceeded(scope: routeScope)" in service
+    assert "if operation == \"download\"" in service
+    search = source("Asspp/Interface/Search/SearchView.swift")
+    assert "withTaskGroup(of: StorefrontSearchOutcome.self)" in search
+    assert "min(3, pending.count)" in search
+    assert "group.cancelAll()" in search
+    assert "mergeStorefront(apps" in search
+    assert "resultRegions[bundleID] = country" in search
+    assert "searchResult.contains(where:" not in search
+    downloads = source("Asspp/Interface/Download/DownloadView.swift")
+    assert 'Section("Active")' in downloads and 'Section("Ready")' in downloads
+
+
 if __name__ == "__main__":
     for test in (
         test_direct_app_count,
@@ -141,6 +162,7 @@ if __name__ == "__main__":
         test_search_and_privacy,
         test_monochrome_and_helper_export,
         test_native_polish_and_size_controls,
+        test_smart_route_and_fast_search,
     ):
         test()
         print("PASS", test.__name__)

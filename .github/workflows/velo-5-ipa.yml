@@ -1,8 +1,8 @@
-name: Velo 5.2 - Native Lightweight
+name: Velo 5.3 - Smart Fast Native
 
 on:
   push:
-    branches: [velo-v5-development, velo-v5-1-monochrome, velo-v5-2-native-polish]
+    branches: [velo-v5-development, velo-v5-1-monochrome, velo-v5-2-native-polish, velo-v5-3-speed]
     paths:
       - "Asspp/Backend/AppStore/**"
       - "Asspp/Interface/Download/PackageView.swift"
@@ -86,6 +86,8 @@ jobs:
           for source in \
             Asspp/Backend/Downloader/Downloads.swift \
             Asspp/Backend/Downloader/Downloads+UI.swift \
+            Asspp/Backend/AppStore/StoreDownloadService.swift \
+            Asspp/Backend/AppStore/DownloadRouteAdvisor.swift \
             Asspp/Interface/Download/DownloadView.swift \
             Asspp/Interface/Download/PackageView.swift \
             Asspp/Interface/Search/SearchView.swift \
@@ -109,6 +111,15 @@ jobs:
             Resources/R18/DownloadPreparationChecks.swift \
             -o "${RUNNER_TEMP}/download-preparation-checks"
           "${RUNNER_TEMP}/download-preparation-checks"
+      - name: Verify smart route cooldown and account isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc -swift-version 6 -parse-as-library \
+            Asspp/Backend/AppStore/DownloadRouteAdvisor.swift \
+            Resources/Velo/DownloadRouteAdvisorChecks.swift \
+            -o "${RUNNER_TEMP}/route-advisor-checks"
+          "${RUNNER_TEMP}/route-advisor-checks"
       - name: Restore pinned native build cache
         id: native_cache
         uses: actions/cache@v4
@@ -234,12 +245,12 @@ jobs:
           R6_TCI_ARCHIVE: ${{ github.workspace }}/.ci-cache/libunicorn.a
         run: |
           set -euo pipefail
-          sed -i '' -e 's/4.2.7/5.2.0/g' -e 's/2026110705/2026111002/g' Resources/AuthFix/build.sh
+          sed -i '' -e 's/4.2.7/5.3.0/g' -e 's/2026110705/2026111003/g' Resources/AuthFix/build.sh
           bash Resources/AuthFix/build.sh
-          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.2.0-Native-unsigned.ipa
-          shasum -a 256 artifacts/Velo-5.2.0-Native-unsigned.ipa > artifacts/Velo-5.2.0-Native-unsigned.ipa.sha256
-          unzip -Z -1 artifacts/Velo-5.2.0-Native-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
-          unzip -p artifacts/Velo-5.2.0-Native-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.3.0-Smart-Fast-unsigned.ipa
+          shasum -a 256 artifacts/Velo-5.3.0-Smart-Fast-unsigned.ipa > artifacts/Velo-5.3.0-Smart-Fast-unsigned.ipa.sha256
+          unzip -Z -1 artifacts/Velo-5.3.0-Smart-Fast-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
+          unzip -p artifacts/Velo-5.3.0-Smart-Fast-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -tq "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayed'
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayedIcon.png'
@@ -262,10 +273,10 @@ jobs:
       - name: Upload Velo IPA and diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: Velo-5.2.0-Native-unsigned
+          name: Velo-5.3.0-Smart-Fast-unsigned
           path: |
-            artifacts/Velo-5.2.0-Native-unsigned.ipa
-            artifacts/Velo-5.2.0-Native-unsigned.ipa.sha256
+            artifacts/Velo-5.3.0-Smart-Fast-unsigned.ipa
+            artifacts/Velo-5.3.0-Smart-Fast-unsigned.ipa.sha256
             artifacts/build-info.json
             artifacts/transport-tests.log
             artifacts/sap-setup-probe-result.txt

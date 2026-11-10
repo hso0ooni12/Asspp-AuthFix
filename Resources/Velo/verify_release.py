@@ -7,9 +7,9 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "5.2.0"
-BUILD = "2026111002"
-IPA_NAME = "Velo-5.2.0-Native-unsigned.ipa"
+VERSION = "5.3.0"
+BUILD = "2026111003"
+IPA_NAME = "Velo-5.3.0-Smart-Fast-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()
@@ -72,13 +72,16 @@ def validate_sources():
     assert "defer { session.invalidateAndCancel() }" in service
     assert "private static let metadataSession" not in service
     assert "DownloadPreparation.shared.generation" not in service
+    assert "DownloadRouteAdvisor.shared.shouldTryPreferred" in service
+    assert "DownloadRouteAdvisor.shared.fallbackSucceededAfterPreferredFailure" in service
+    assert "isPreferredTransportFailure" in service
     protocol = (ROOT / "Asspp/Backend/AppStore/StoreDownloadProtocol.swift").read_text()
     assert 'onFallback("volumeStore-timeout")' in protocol
     for name in ["Account/AccountView", "Download/DownloadView", "Search/SearchView", "Setting/SettingView", "Welcome/MainView"]:
         code = (ROOT / ("Asspp/Interface/" + name + ".swift")).read_text()
         assert "ASS•PP" not in code, name
     assert not (ROOT / "Asspp/Backend/Decryption/DirectFairPlayed.swift").exists()
-    print("PASS Velo 5.2 native UI, progressive storefront search, safe batch export and download core")
+    print("PASS Velo 5.3 smart route cooldown, parallel storefront search and stable download core")
 
 def validate_archive():
     spec = importlib.util.spec_from_file_location("r17_checks", ROOT / "Resources/R17/verify_release.py")
@@ -102,14 +105,14 @@ def validate_archive():
     path = ROOT / "artifacts/build-info.json"
     report = json.loads(path.read_text())
     report.update(
-        release="Velo 5.2 Native Lightweight on stable R18/R20 core",
+        release="Velo 5.3 Smart Fast Native on stable R18/R20 core",
         displayName="Velo",
         preservesBundleIdentifier=True,
         quickDownloadFromSearch=True,
         autoFreeLicenseOnDownload=True,
         autoPaidPurchase=False,
         loginSAPPreconnect=True,
-        downloadTransport="Known-working R20 per-request URLSession",
+        downloadTransport="R20 per-request URLSession with account-scoped temporary R3 cooldown",
         directDecryptionOfNewDownloads=False,
         deviceValidation="Physical iPhone testing required for sign-in and free license requests",
         measuredSpeedImprovement="not benchmarked in CI",
@@ -122,12 +125,14 @@ def validate_archive():
         deleteConfirmation=False,
         deviceTesting="Deletion and multiple iPhone downloads require device verification",
         searchCache="180-second in-memory result cache, stale searches cancelled",
-        globalSearch="All Storefronts with progressive 8-country batches and region-aware Get",
+        globalSearch="All Storefronts in progressive 8-country batches, 3 concurrent workers and region-aware Get",
         appearance="Native monochrome, consistent 44pt pill controls and Automatic/Light/Dark",
         appStoreSearchRows="60pt icons, seller/rating and 84pt GET/OPEN actions",
         releaseOptimization="Swift -Osize, no unused avatar image, non-global Mach-O symbol stripping",
         progressPerformance="Speed samples throttled to 2 Hz; progress updates throttled to 5 Hz",
         priorIPABytes=20337534,
+        priorVelo52IPABytes=16302302,
+        bytesChangedVsVelo52=16302302 - ipa_path.stat().st_size,
         ipaBytes=ipa_path.stat().st_size,
         bytesSavedVsVelo51=20337534 - ipa_path.stat().st_size,
         mainExecutableBytes=executable_size,

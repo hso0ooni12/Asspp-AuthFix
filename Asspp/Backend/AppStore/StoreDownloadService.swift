@@ -61,10 +61,22 @@ enum StoreDownloadService {
         do {
             let region = Configuration.countryCode(for: account.store)
             var effectiveVersion = version
-            // R3: Apple's newer ent/download transport uses an account-bound KBSync
-            // blob. This is experimental and falls back to the verified R2 path.
-            var preferredResponse: [String: Any]?
+            // Only the in-memory route decision uses this identity. Never log
+            // or persist a DSID, cookie, password token, or signed IPA URL.
+            let routeScope = "\(account.directoryServicesIdentifier)|\(account.store)|\(platform.rawValue)"
+            let tryPreferred: Bool
             if operation == "download" {
+                tryPreferred = await DownloadRouteAdvisor.shared.shouldTryPreferred(scope: routeScope)
+            } else {
+                tryPreferred = false
+            }
+            var preferredFailureWorthRemembering = false
+            // R3: Apple's newer ent/download transport uses an account-bound KBSync
+            // blob. Preserve R20 fallback; cool down R3 only after repeated
+            // transport failures followed by successful legacy downloads.
+            var preferredResponse: [String: Any]?
+            if tryPreferred {
+                var reachedPreferredTransport = false
                 do {
                     let preferredVersion: String
                     if let version {
@@ -78,14 +90,18 @@ enum StoreDownloadService {
                         }
                         preferredVersion = metadata.externalVersionID
                     }
+                    reachedPreferredTransport = true
                     preferredResponse = try await fetchPreferred(session: session, account: &account,
                                                                   appID: app.id, bundleID: app.bundleID,
                                                                   version: preferredVersion, trace: trace)
                     effectiveVersion = preferredVersion
                 } catch {
                     try Task.checkCancellation()
+                    preferredFailureWorthRemembering = reachedPreferredTransport && isPreferredTransportFailure(error)
                     logger.info("Store download [\(trace)]: preferred transport unavailable, trying legacy transport; \(StoreDiagnostics.errorSummary(error))")
                 }
+            } else if operation == "download" {
+                logger.info("Store download [\(trace)]: preferred route on cooldown; trying verified legacy transport")
             }
             let response: [String: Any]
             if let preferredResponse {
@@ -121,6 +137,13 @@ enum StoreDownloadService {
             }
             let item = try StoreDownloadProtocol.packageItem(response, bundleID: app.bundleID, version: effectiveVersion)
             let result = try parse(item)
+            if operation == "download" {
+                if preferredResponse != nil {
+                    await DownloadRouteAdvisor.shared.preferredSucceeded(scope: routeScope)
+                } else if preferredFailureWorthRemembering {
+                    await DownloadRouteAdvisor.shared.fallbackSucceededAfterPreferredFailure(scope: routeScope)
+                }
+            }
             logger.info("Store download [\(trace)]: product metadata ready")
             return result
         } catch {
@@ -129,6 +152,24 @@ enum StoreDownloadService {
             logger.error("Store download [\(trace)]: failed, \(StoreDiagnostics.errorSummary(error))")
             throw error
         }
+    }
+
+    /// A rejected license, Apple ID challenge, or cancelled task is not an
+    /// indication that the preferred network transport is unhealthy.
+    private static func isPreferredTransportFailure(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let failure = error as? StoreDownloadError {
+            switch failure {
+            case .invalidPackage, .invalidRedirect, .empty:
+                return true
+            case let .response(status), let .emptyResponse(status):
+                return status == 0 || status == 404 || status >= 500
+            case .catalogUnavailable, .actionRequired, .noVersions, .rejected:
+                return false
+            }
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code != NSURLErrorCancelled
     }
 
     private static func catalogVersion(session: URLSession, appID: Int64, region: String, platform: EntityType, trace: String) async throws -> StoreDownloadProtocol.CatalogVersion {

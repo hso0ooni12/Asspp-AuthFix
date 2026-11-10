@@ -23,18 +23,6 @@ struct DownloadView: View {
 
     private var content: some View {
         List {
-            HStack {
-                Text("\(vm.manifests.filter(\.completed).count) ready")
-                Spacer()
-                if vm.activeOperationCount > 0 {
-                    Text("\(vm.activeOperationCount) active")
-                }
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
-
             if selectionMode {
                 HStack {
                     Text("\(selectedIDs.count) selected")
@@ -142,27 +130,44 @@ struct DownloadView: View {
     }
 
     private var packageList: some View {
-        ForEach(vm.manifests, id: \.id) { req in
-            HStack(spacing: 12) {
-                if selectionMode {
-                    Button {
-                        guard req.completed else { return }
-                        if !selectedIDs.insert(req.id).inserted { selectedIDs.remove(req.id) }
-                    } label: {
-                        Image(systemName: selectedIDs.contains(req.id) ?
-                              "checkmark.circle.fill" : "circle")
-                            .font(.title2)
-                            .foregroundStyle(req.completed ? AssppTheme.accent : .gray)
+        Group {
+            if vm.manifests.contains(where: { !$0.completed }) {
+                Section("Active") {
+                    ForEach(vm.manifests.filter { !$0.completed }, id: \.id) { req in
+                        manifestRow(req)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!req.completed)
-                }
-                PackageManifestRow(manifest: req) {
-                    deleteImmediately(id: req.id)
                 }
             }
-                .listRowInsets(EdgeInsets(top: 8, leading: 18, bottom: 8, trailing: 18))
+            if vm.manifests.contains(where: \.completed) {
+                Section("Ready") {
+                    ForEach(vm.manifests.filter(\.completed), id: \.id) { req in
+                        manifestRow(req)
+                    }
+                }
+            }
         }
+    }
+
+    private func manifestRow(_ req: PackageManifest) -> some View {
+        HStack(spacing: 12) {
+            if selectionMode {
+                Button {
+                    guard req.completed else { return }
+                    if !selectedIDs.insert(req.id).inserted { selectedIDs.remove(req.id) }
+                } label: {
+                    Image(systemName: selectedIDs.contains(req.id) ?
+                          "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundStyle(req.completed ? AssppTheme.accent : .gray)
+                }
+                .buttonStyle(.plain)
+                .disabled(!req.completed)
+            }
+            PackageManifestRow(manifest: req) {
+                deleteImmediately(id: req.id)
+            }
+        }
+        .listRowInsets(EdgeInsets(top: 8, leading: 18, bottom: 8, trailing: 18))
     }
 
     private func deleteImmediately(id: UUID) {
@@ -190,7 +195,8 @@ private struct PackageManifestRow: View {
         VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 10) {
                     NavigationLink(value: manifest) {
-                        ArchivePreviewView(archive: manifest.package)
+                        ArchivePreviewView(archive: manifest.package,
+                                           preferredIconSize: 60, showsVersion: false)
                     }
                     .buttonStyle(.plain)
                     if manifest.completed {
