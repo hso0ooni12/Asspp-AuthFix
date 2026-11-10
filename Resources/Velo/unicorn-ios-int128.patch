@@ -31,3 +31,12 @@ diff --git a/unicorn-engine-sys-tci/CMakeLists.txt b/unicorn-engine-sys-tci/CMak
              INPUT_FILE /dev/null
              OUTPUT_VARIABLE UC_COMPILER_MACRO)
  
+@@ -334,7 +334,7 @@
+     if (ATOMIC_LINKAGE_FIX)
+         set (EXTRA_CFLAGS "${EXTRA_CFLAGS} -latomic")
+     endif()
+-    if (CMAKE_OSX_SYSROOT)
++    if (CMAKE_OSX_SYSROOT AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+         # https://github.com/unicorn-engine/unicorn/issues/1917
+         set (EXTRA_CFLAGS "${EXTRA_CFLAGS} -isysroot ${CMAKE_OSX_SYSROOT} ")
+     endif()
