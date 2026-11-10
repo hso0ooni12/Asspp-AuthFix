@@ -215,6 +215,13 @@ jobs:
             -DUNICORN_ARCH=x86 -DUNICORN_BUILD_TESTS=OFF -DUNICORN_INSTALL=OFF \
             -DUNICORN_INTERPRETER=ON
           grep -E "^UNICORN_INTERPRETER:BOOL=ON$" "${RUNNER_TEMP}/r6-tci-build/CMakeCache.txt"
+          if [ ! -s "${RUNNER_TEMP}/r6-tci-build/x86_64-softmmu/config-target.h" ]; then
+            echo "::error::Pinned Unicorn configure did not generate x86_64-softmmu/config-target.h"
+            if [ -f "${RUNNER_TEMP}/r6-tci-build/config.log" ]; then
+              tail -100 "${RUNNER_TEMP}/r6-tci-build/config.log"
+            fi
+            exit 1
+          fi
           cmake --build "${RUNNER_TEMP}/r6-tci-build" --parallel "$(sysctl -n hw.ncpu)"
           archive="${RUNNER_TEMP}/r6-tci-build/libunicorn.a"
           test -s "${archive}"
