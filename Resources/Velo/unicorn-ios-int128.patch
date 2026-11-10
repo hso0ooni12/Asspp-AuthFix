@@ -21,3 +21,13 @@ diff --git a/unicorn-engine-sys-tci/qemu/include/qemu/osdep.h b/unicorn-engine-s
  #include "sys/mman.h"
  #endif
  
+diff --git a/unicorn-engine-sys-tci/CMakeLists.txt b/unicorn-engine-sys-tci/CMakeLists.txt
+--- a/unicorn-engine-sys-tci/CMakeLists.txt
++++ b/unicorn-engine-sys-tci/CMakeLists.txt
+@@ -201,5 +201,5 @@
+     else()
+-        execute_process(COMMAND ${CMAKE_C_COMPILER} -dM -E -
++        execute_process(COMMAND ${CMAKE_C_COMPILER} -target arm64-apple-ios17.0 -dM -E -
+             INPUT_FILE /dev/null
+             OUTPUT_VARIABLE UC_COMPILER_MACRO)
+ 

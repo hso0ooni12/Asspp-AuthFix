@@ -206,11 +206,9 @@ jobs:
           git -C "${checkout}" apply --check "${GITHUB_WORKSPACE}/Resources/Velo/unicorn-ios-int128.patch"
           git -C "${checkout}" apply "${GITHUB_WORKSPACE}/Resources/Velo/unicorn-ios-int128.patch"
           ios_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
-          chmod +x Resources/Velo/ios_arm64_clang.sh
           ARCHFLAGS="-arch arm64" cmake \
             -S "${checkout}/unicorn-engine-sys-tci" -B "${RUNNER_TEMP}/r6-tci-build" \
             -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="${ios_sdk}" \
-            -DCMAKE_C_COMPILER="${GITHUB_WORKSPACE}/Resources/Velo/ios_arm64_clang.sh" \
             -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
             -DCMAKE_C_FLAGS="-target arm64-apple-ios17.0 -DCONFIG_POSIX_MEMALIGN" \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
