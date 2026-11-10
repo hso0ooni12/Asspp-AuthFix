@@ -9,3 +9,15 @@ diff --git a/unicorn-engine-sys-tci/qemu/include/qemu/int128.h b/unicorn-engine-
 +#if !(defined(_MSC_VER) && defined(__clang__)) && !defined(__APPLE__)
  typedef Int128 __int128_t;
  #endif
+diff --git a/unicorn-engine-sys-tci/qemu/include/qemu/osdep.h b/unicorn-engine-sys-tci/qemu/include/qemu/osdep.h
+--- a/unicorn-engine-sys-tci/qemu/include/qemu/osdep.h
++++ b/unicorn-engine-sys-tci/qemu/include/qemu/osdep.h
+@@ -111,7 +111,7 @@
+ #include "sysemu/os-win32.h"
+ #endif
+ 
+-#ifdef CONFIG_POSIX
++#if defined(CONFIG_POSIX) || defined(__APPLE__)
+ #include "sys/mman.h"
+ #endif
+ 

@@ -201,8 +201,8 @@ jobs:
           git clone --depth 1 https://github.com/1rhino2/unicorn-tci.git "${checkout}"
           git -C "${checkout}" fetch --depth 1 origin e3f075a62742913bb734a55a474aec65c9e5745e
           git -C "${checkout}" checkout --detach e3f075a62742913bb734a55a474aec65c9e5745e
-          # Apple's SDK already defines __int128_t; the pinned QEMU fallback
-          # must not redefine it as its own struct on iOS targets.
+          # Apple's SDK already defines __int128_t, and iOS needs POSIX mmap
+          # declarations even when QEMU's configure script was not run.
           git -C "${checkout}" apply --check "${GITHUB_WORKSPACE}/Resources/Velo/unicorn-ios-int128.patch"
           git -C "${checkout}" apply "${GITHUB_WORKSPACE}/Resources/Velo/unicorn-ios-int128.patch"
           ios_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
