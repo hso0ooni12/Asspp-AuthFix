@@ -119,6 +119,9 @@ def test_native_polish_and_size_controls():
     assert "lastSpeedUpdates" in manager and "(now - previous) >= 0.5" in manager
     assert not (ROOT / "Asspp/App/Assets.xcassets/Avatar.imageset").exists()
     assert (ROOT / "Resources/Velo/ArchivedAssets/Avatar.imageset/Avatar.png").exists()
+    welcome = source("Asspp/Interface/Welcome/WelcomeView.swift")
+    assert "Image(.avatar)" not in welcome and "ColorfulView" not in welcome
+    assert "ColorfulX" not in source("Asspp.xcodeproj/project.pbxproj")
     release = source("Configuration/Release.xcconfig")
     assert "SWIFT_OPTIMIZATION_LEVEL = -Osize" in release
     build = source("Resources/AuthFix/build.sh")

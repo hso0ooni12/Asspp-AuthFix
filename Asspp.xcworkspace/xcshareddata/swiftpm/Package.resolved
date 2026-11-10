@@ -47,24 +47,6 @@
       }
     },
     {
-      "identity" : "colorfulx",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Lakr233/ColorfulX",
-      "state" : {
-        "revision" : "2f008fcffc7f23811b2ba70eda77c57223815bc3",
-        "version" : "6.0.2"
-      }
-    },
-    {
-      "identity" : "colorvector",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Lakr233/ColorVector.git",
-      "state" : {
-        "revision" : "6da8726bf38d68eb943d0f2139ac2a1fac70e65b",
-        "version" : "1.0.4"
-      }
-    },
-    {
       "identity" : "console-kit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/vapor/console-kit.git",

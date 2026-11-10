@@ -20,7 +20,6 @@
 		50D44D3F2C3FA59500CF6A69 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 50D44D3E2C3FA59500CF6A69 /* Kingfisher */; };
 		50D44D512C3FC85F00CF6A69 /* AnyCodable in Frameworks */ = {isa = PBXBuildFile; productRef = 50D44D502C3FC85F00CF6A69 /* AnyCodable */; };
 		50DCBD782F346E01007100D2 /* Certificates in Resources */ = {isa = PBXBuildFile; fileRef = 50DCBD772F346DFE007100D2 /* Certificates */; };
-		50E28B812C40BA52007891E0 /* ColorfulX in Frameworks */ = {isa = PBXBuildFile; productRef = 50E28B802C40BA52007891E0 /* ColorfulX */; };
 		80CD64ED2C42AA2C0073E206 /* KeychainAccess in Frameworks */ = {isa = PBXBuildFile; productRef = 80CD64EC2C42AA2C0073E206 /* KeychainAccess */; };
 /* End PBXBuildFile section */
 
@@ -55,7 +54,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				50D44D3F2C3FA59500CF6A69 /* Kingfisher in Frameworks */,
-				50E28B812C40BA52007891E0 /* ColorfulX in Frameworks */,
 				50D44D232C3F92C500CF6A69 /* NIOSSL in Frameworks */,
 				50D0C8B82C40187800538F49 /* Vapor in Frameworks */,
 				507974632E784D4E0016F540 /* Digger in Frameworks */,
@@ -129,7 +127,6 @@
 				50D44D3E2C3FA59500CF6A69 /* Kingfisher */,
 				50D44D502C3FC85F00CF6A69 /* AnyCodable */,
 				50D0C8B72C40187800538F49 /* Vapor */,
-				50E28B802C40BA52007891E0 /* ColorfulX */,
 				80CD64EC2C42AA2C0073E206 /* KeychainAccess */,
 				50D262932E77D63B00FF8813 /* Logging */,
 				507974622E784D4E0016F540 /* Digger */,
@@ -171,7 +168,6 @@
 				50D44D3D2C3FA59500CF6A69 /* XCRemoteSwiftPackageReference "Kingfisher" */,
 				50D44D4F2C3FC85F00CF6A69 /* XCRemoteSwiftPackageReference "AnyCodable" */,
 				50D0C8B62C40187800538F49 /* XCRemoteSwiftPackageReference "vapor" */,
-				50E28B7F2C40BA52007891E0 /* XCRemoteSwiftPackageReference "ColorfulX" */,
 				80CD64EB2C42AA2C0073E206 /* XCRemoteSwiftPackageReference "KeychainAccess" */,
 				50D262922E77D63B00FF8813 /* XCRemoteSwiftPackageReference "swift-log" */,
 				507974612E784D4E0016F540 /* XCRemoteSwiftPackageReference "Digger" */,
@@ -470,14 +466,6 @@
 				minimumVersion = 0.6.7;
 			};
 		};
-		50E28B7F2C40BA52007891E0 /* XCRemoteSwiftPackageReference "ColorfulX" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/Lakr233/ColorfulX";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 6.0.2;
-			};
-		};
 		80CD64EB2C42AA2C0073E206 /* XCRemoteSwiftPackageReference "KeychainAccess" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/kishikawakatsumi/KeychainAccess.git";
@@ -547,11 +535,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 50D44D4F2C3FC85F00CF6A69 /* XCRemoteSwiftPackageReference "AnyCodable" */;
 			productName = AnyCodable;
-		};
-		50E28B802C40BA52007891E0 /* ColorfulX */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 50E28B7F2C40BA52007891E0 /* XCRemoteSwiftPackageReference "ColorfulX" */;
-			productName = ColorfulX;
 		};
 		80CD64EC2C42AA2C0073E206 /* KeychainAccess */ = {
 			isa = XCSwiftPackageProductDependency;

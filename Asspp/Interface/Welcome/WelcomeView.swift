@@ -5,7 +5,6 @@
 //  Created by 秋星桥 on 2024/7/11.
 //
 
-import ColorfulX
 import SwiftUI
 
 struct WelcomeView: View {
@@ -14,9 +13,9 @@ struct WelcomeView: View {
     var body: some View {
         ZStack {
             VStack(spacing: 32) {
-                Image(.avatar)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
+                Image(systemName: "arrow.down.app")
+                    .font(.system(size: 62, weight: .light))
+                    .foregroundStyle(.primary)
                     .frame(width: 80, height: 80)
 
                 Text("Welcome to Velo")
@@ -47,11 +46,7 @@ struct WelcomeView: View {
             .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            ColorfulView(color: .constant(.winter))
-                .opacity(0.25)
-                .ignoresSafeArea(),
-        )
+        .background(AssppTheme.background)
         #if os(macOS)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         #endif
