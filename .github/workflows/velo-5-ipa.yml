@@ -94,6 +94,7 @@ jobs:
             Asspp/Interface/Search/ProductView.swift \
             Asspp/Interface/Search/QuickDownloadButton.swift \
             Asspp/Interface/Setting/SettingView.swift \
+            Asspp/Interface/Setting/LogView.swift \
             Asspp/Interface/Welcome/MainView.swift \
             Asspp/Interface/Account/AccountView.swift \
             Asspp/Extension/PublishedPersist.swift; do

@@ -43,7 +43,7 @@ struct LogView: View {
                     Spacer()
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 48))
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(.primary)
                     Text("Sensitive Content")
                         .font(.system(.title2, design: .rounded, weight: .semibold))
                     Text("Logs may contain sensitive account information. Do not screenshot or share them to avoid leaking your credentials.")
@@ -58,8 +58,7 @@ struct LogView: View {
                         Text("Show Logs")
                             .font(.system(.body, design: .rounded, weight: .semibold))
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
+                    .buttonStyle(VeloPillButtonStyle(prominent: true))
                     Spacer()
                 }
                 .transition(.opacity)

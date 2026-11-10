@@ -122,6 +122,10 @@ def test_native_polish_and_size_controls():
     welcome = source("Asspp/Interface/Welcome/WelcomeView.swift")
     assert "Image(.avatar)" not in welcome and "ColorfulView" not in welcome
     assert "ColorfulX" not in source("Asspp.xcodeproj/project.pbxproj")
+    logs = source("Asspp/Interface/Setting/LogView.swift")
+    assert ".foregroundStyle(.yellow)" not in logs
+    assert "VeloPillButtonStyle(prominent: true)" in logs
+    assert "\\.isEnabled" in main
     release = source("Configuration/Release.xcconfig")
     assert "SWIFT_OPTIMIZATION_LEVEL = -Osize" in release
     build = source("Resources/AuthFix/build.sh")

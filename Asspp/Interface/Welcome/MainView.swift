@@ -268,6 +268,7 @@ enum AssppTheme {
 struct VeloPillButtonStyle: ButtonStyle {
     var prominent = false
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -283,7 +284,7 @@ struct VeloPillButtonStyle: ButtonStyle {
                 Capsule().strokeBorder(AssppTheme.separator.opacity(prominent ? 0 : 0.4), lineWidth: 0.5)
             }
             .contentShape(Capsule())
-            .opacity(configuration.isPressed ? 0.65 : 1)
+            .opacity(!isEnabled ? 0.45 : configuration.isPressed ? 0.65 : 1)
     }
 }
 
