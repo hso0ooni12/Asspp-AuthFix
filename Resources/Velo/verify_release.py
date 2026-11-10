@@ -7,9 +7,9 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "5.1.0"
-BUILD = "2026111001"
-IPA_NAME = "Velo-5.1.0-Monochrome-unsigned.ipa"
+VERSION = "5.2.0"
+BUILD = "2026111002"
+IPA_NAME = "Velo-5.2.0-Native-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()
@@ -78,7 +78,7 @@ def validate_sources():
         code = (ROOT / ("Asspp/Interface/" + name + ".swift")).read_text()
         assert "ASS•PP" not in code, name
     assert not (ROOT / "Asspp/Backend/Decryption/DirectFairPlayed.swift").exists()
-    print("PASS Velo 5.1 native UI, progressive storefront search, safe batch export and download core")
+    print("PASS Velo 5.2 native UI, progressive storefront search, safe batch export and download core")
 
 def validate_archive():
     spec = importlib.util.spec_from_file_location("r17_checks", ROOT / "Resources/R17/verify_release.py")
@@ -90,16 +90,19 @@ def validate_archive():
     checks.validate_sources()
     checks.validate_archive()
     import zipfile
-    with zipfile.ZipFile(ROOT / "artifacts" / IPA_NAME) as archive:
+    ipa_path = ROOT / "artifacts" / IPA_NAME
+    with zipfile.ZipFile(ipa_path) as archive:
         metadata = plistlib.loads(archive.read("Payload/Asspp.app/Info.plist"))
         assert metadata["CFBundleDisplayName"] == "Velo"
         assert metadata["CFBundleName"] == "Velo", metadata
         assert metadata["CFBundleIdentifier"] == "wiki.qaq.Asspp.AuthFix"
         assert any(p.endswith("Assets.car") for p in archive.namelist())
+        executable_size = archive.getinfo("Payload/Asspp.app/Asspp").file_size
+        asset_catalog_size = archive.getinfo("Payload/Asspp.app/Assets.car").file_size
     path = ROOT / "artifacts/build-info.json"
     report = json.loads(path.read_text())
     report.update(
-        release="Velo 5.1 Monochrome on stable R18/R20 core",
+        release="Velo 5.2 Native Lightweight on stable R18/R20 core",
         displayName="Velo",
         preservesBundleIdentifier=True,
         quickDownloadFromSearch=True,
@@ -120,7 +123,15 @@ def validate_archive():
         deviceTesting="Deletion and multiple iPhone downloads require device verification",
         searchCache="180-second in-memory result cache, stale searches cancelled",
         globalSearch="All Storefronts with progressive 8-country batches and region-aware Get",
-        appearance="Semantic monochrome, Automatic/Light/Dark",
+        appearance="Native monochrome, consistent 44pt pill controls and Automatic/Light/Dark",
+        appStoreSearchRows="60pt icons, seller/rating and 84pt GET/OPEN actions",
+        releaseOptimization="Swift -Osize, no unused avatar image, non-global Mach-O symbol stripping",
+        progressPerformance="Speed samples throttled to 2 Hz; progress updates throttled to 5 Hz",
+        priorIPABytes=20337534,
+        ipaBytes=ipa_path.stat().st_size,
+        bytesSavedVsVelo51=20337534 - ipa_path.stat().st_size,
+        mainExecutableBytes=executable_size,
+        assetCatalogBytes=asset_catalog_size,
         helperExportPicker=True,
         nativeBuildCache="Pinned FairPlayed, KBSync and Unicorn outputs cached by source hash",
         appStorePreparation="Observable request stages before signed IPA URL is ready",

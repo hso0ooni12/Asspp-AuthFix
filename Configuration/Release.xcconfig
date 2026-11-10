@@ -7,6 +7,8 @@
 // MARK: - Release Compilation
 
 SWIFT_COMPILATION_MODE = wholemodule
+// Prefer a smaller release binary; Debug retains its faster, unoptimized path.
+SWIFT_OPTIMIZATION_LEVEL = -Osize
 VALIDATE_PRODUCT = YES
 ENABLE_NS_ASSERTIONS = NO
 
@@ -14,7 +16,10 @@ ENABLE_NS_ASSERTIONS = NO
 
 DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
 MTL_ENABLE_DEBUG_INFO = NO
-COPY_PHASE_STRIP = NO
+// Strip private/debug symbols from installed products; exported C symbols used
+// by the Unicorn/KBSync bridge are verified after build.
+COPY_PHASE_STRIP = YES
+STRIP_STYLE = non-global
 
 // MARK: - Script Sandboxing
 

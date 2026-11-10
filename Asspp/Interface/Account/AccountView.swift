@@ -132,7 +132,7 @@ struct AccountView: View {
                             Text("Add your Apple Account to download IPA files.")
                         } actions: {
                             Button("Add Account") { addAccount = true }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(VeloPillButtonStyle(prominent: true))
                         }
                         .listRowBackground(Color.clear)
                     } else {

@@ -30,43 +30,45 @@ struct QuickDownloadButton: View {
                 NavigationLink(value: request) {
                     Group {
                         if request.completed {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.title3)
+                            Text("OPEN")
+                                .font(.caption.weight(.bold))
                         } else {
                             ZStack {
                                 Circle()
-                                    .stroke(AssppTheme.accent.opacity(0.18), lineWidth: 4)
+                                    .stroke(AssppTheme.separator, lineWidth: 3)
                                 Circle()
                                     .trim(from: 0, to: min(max(request.state.percent, 0), 1))
                                     .stroke(AssppTheme.accent,
-                                            style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                                            style: StrokeStyle(lineWidth: 3, lineCap: .round))
                                     .rotationEffect(.degrees(-90))
                                 if request.state.status == .pending && request.state.percent == 0 {
                                     ProgressView()
                                         .tint(AssppTheme.accent)
-                                        .scaleEffect(0.7)
+                                        .scaleEffect(0.65)
                                 } else {
                                     Text("\(Int(min(max(request.state.percent, 0), 1) * 100))%")
-                                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                                        .font(.system(size: 8, weight: .bold, design: .rounded))
                                         .monospacedDigit()
                                         .foregroundStyle(AssppTheme.accent)
                                 }
                             }
-                            .frame(width: 35, height: 35)
+                            .frame(width: 30, height: 30)
                         }
                     }
-                    .frame(width: 62, height: 40)
+                    .frame(width: 52)
                 }
                 .accessibilityLabel(request.completed ? "Download complete" :
                     "Downloading, \(Int(request.state.percent * 100)) percent. Show download")
-                .buttonStyle(.bordered)
+                .buttonStyle(VeloPillButtonStyle())
             } else if let pendingPreparation {
                 HStack(spacing: 5) {
                     ProgressView().tint(AssppTheme.accent).controlSize(.mini)
-                    Text("Preparing")
-                        .font(.caption2.bold())
+                    Text("WAIT")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.primary)
                 }
-                .frame(minWidth: 80, minHeight: 38)
+                .frame(width: 84, height: 44)
+                .background(AssppTheme.elevated, in: Capsule())
                 .accessibilityLabel(pendingPreparation.stage.rawValue)
             } else {
                 Button(action: selectAccount) {
@@ -74,14 +76,13 @@ struct QuickDownloadButton: View {
                         if requesting {
                             ProgressView().tint(AssppTheme.accent)
                         } else {
-                            Label("Get", systemImage: "arrow.down")
-                                .font(.subheadline.bold())
+                            Text("GET")
+                                .font(.subheadline.weight(.bold))
                         }
                     }
-                    .frame(minWidth: 48, minHeight: 24)
+                    .frame(width: 52)
                 }
-                .buttonStyle(.bordered)
-                .tint(AssppTheme.accent)
+                .buttonStyle(VeloPillButtonStyle())
                 .disabled(requesting)
                 .accessibilityLabel(requesting ? "Preparing download" : "Download IPA")
                 .contextMenu {

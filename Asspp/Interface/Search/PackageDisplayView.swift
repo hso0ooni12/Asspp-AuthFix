@@ -26,19 +26,10 @@ struct PackageDisplayView: View {
                         style = .detail
                     } label: {
                         Text("More")
-                            .foregroundStyle(.secondary)
-                            .padding(.leading, 10)
                     }
-                    .buttonStyle(.borderless)
-                    .background(Rectangle().fill(LinearGradient(
-                        gradient: Gradient(colors: [.clear, .white]),
-                        startPoint: .init(x: 0, y: 0.5),
-                        endPoint: .init(x: 0.2, y: 0.5),
-                    )).blendMode(.destinationOut))
-                    .transition(.scale)
+                    .buttonStyle(VeloPillButtonStyle())
                 }
             }
-            .compositingGroup()
             .padding(.vertical, 4)
     }
 

@@ -263,6 +263,30 @@ enum AssppTheme {
     }
 }
 
+/// Compact, 44pt-tall App Store-style actions. Explicit adaptive contrast avoids
+/// white-on-white / black-on-black labels when the app appearance is overridden.
+struct VeloPillButtonStyle: ButtonStyle {
+    var prominent = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(prominent ? (colorScheme == .dark ? Color.black : .white) : .primary)
+            .padding(.horizontal, 16)
+            .frame(minWidth: 84, minHeight: 44)
+            .background(
+                prominent ? (colorScheme == .dark ? Color.white : .black) : AssppTheme.elevated,
+                in: Capsule()
+            )
+            .overlay {
+                Capsule().strokeBorder(AssppTheme.separator.opacity(prominent ? 0 : 0.4), lineWidth: 0.5)
+            }
+            .contentShape(Capsule())
+            .opacity(configuration.isPressed ? 0.65 : 1)
+    }
+}
+
 struct AssppScreenHeader: View {
     let eyebrow: String
     let title: String

@@ -21,6 +21,11 @@ class Downloads {
     @ObservationIgnored
     private var lastProgressUpdates: [UUID: CFAbsoluteTime] = [:]
 
+    // Digger can emit speed samples much faster than a person can read them.
+    // Limit SwiftUI invalidations while preserving responsive progress rings.
+    @ObservationIgnored
+    private var lastSpeedUpdates: [UUID: CFAbsoluteTime] = [:]
+
     /// Manifest IDs whose Digger callbacks are already attached, so a
     /// pause/resume cycle does not register a second completion handler (which
     /// would run finalize() twice and destroy the downloaded bytes).
@@ -143,11 +148,18 @@ class Downloads {
                 Task { @MainActor in
                     guard self.manifests.contains(where: { $0.id == request.id }) else { return }
                     guard request.state.status == .downloading || request.state.status == .pending else { return }
+                    let now = CFAbsoluteTimeGetCurrent()
+                    let previous = self.lastSpeedUpdates[request.id] ?? 0
+                    guard (now - previous) >= 0.5 else { return }
+                    self.lastSpeedUpdates[request.id] = now
                     let wasDownloading = request.state.status == .downloading
                     var newState = request.state
                     newState.status = .downloading
-                    newState.speed = Self.speedFormatter.string(fromByteCount: Int64(speedBytes))
-                    request.state = newState
+                    let formattedSpeed = Self.speedFormatter.string(fromByteCount: Int64(speedBytes))
+                    if newState.speed != formattedSpeed || !wasDownloading {
+                        newState.speed = formattedSpeed
+                        request.state = newState
+                    }
                     if !wasDownloading {
                         self.refreshRunningTaskCount()
                     }
@@ -179,6 +191,8 @@ class Downloads {
             .completion { completion in
                 Task { @MainActor in
                     self.registeredCallbacks.remove(request.id)
+                    self.lastSpeedUpdates.removeValue(forKey: request.id)
+                    self.lastProgressUpdates.removeValue(forKey: request.id)
                     guard self.manifests.contains(where: { $0.id == request.id }) else {
                         self.releaseTransferSlot(request.id)
                         return
@@ -286,6 +300,7 @@ class Downloads {
         releaseTransferSlot(request.id)
         if !finalizingIDs.contains(request.id) { request.delete() }
         lastProgressUpdates.removeValue(forKey: request.id)
+        lastSpeedUpdates.removeValue(forKey: request.id)
         refreshRunningTaskCount()
         saveManifests()
     }
@@ -294,6 +309,8 @@ class Downloads {
         logger.info("restarting download request id: \(request.id)")
         DiggerManager.shared.cancelTask(for: request.url)
         registeredCallbacks.remove(request.id)
+        lastProgressUpdates.removeValue(forKey: request.id)
+        lastSpeedUpdates.removeValue(forKey: request.id)
         releaseTransferSlot(request.id)
         request.delete()
         request.state = .init()

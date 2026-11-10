@@ -100,6 +100,31 @@ def test_monochrome_and_helper_export():
     assert "UIColor.systemBackgroundColor" in patch
 
 
+def test_native_polish_and_size_controls():
+    main = source("Asspp/Interface/Welcome/MainView.swift")
+    assert "struct VeloPillButtonStyle: ButtonStyle" in main
+    assert "minHeight: 44" in main and "colorScheme == .dark" in main
+    search = source("Asspp/Interface/Search/SearchView.swift")
+    assert "preferredIconSize: 60" in search and "showsRating: true" in search
+    quick = source("Asspp/Interface/Search/QuickDownloadButton.swift")
+    assert "VeloPillButtonStyle()" in quick and 'Text("GET")' in quick
+    assert ".buttonStyle(.bordered)" not in quick
+    downloads = source("Asspp/Interface/Download/DownloadView.swift")
+    assert "VeloPillButtonStyle()" in downloads
+    artwork = source("Asspp/Interface/Search/ArchivePreviewView.swift")
+    assert ".cacheOriginalImage()" not in artwork
+    detail = source("Asspp/Interface/Search/PackageDisplayView.swift")
+    assert "gradient: Gradient(colors: [.clear, .white])" not in detail
+    manager = source("Asspp/Backend/Downloader/Downloads.swift")
+    assert "lastSpeedUpdates" in manager and "(now - previous) >= 0.5" in manager
+    assert not (ROOT / "Asspp/App/Assets.xcassets/Avatar.imageset").exists()
+    assert (ROOT / "Resources/Velo/ArchivedAssets/Avatar.imageset/Avatar.png").exists()
+    release = source("Configuration/Release.xcconfig")
+    assert "SWIFT_OPTIMIZATION_LEVEL = -Osize" in release
+    build = source("Resources/AuthFix/build.sh")
+    assert "xcrun strip -x -S" in build and "_R3GenerateKBSync" in build
+
+
 if __name__ == "__main__":
     for test in (
         test_direct_app_count,
@@ -108,6 +133,7 @@ if __name__ == "__main__":
         test_user_data_not_erased_by_preferences,
         test_search_and_privacy,
         test_monochrome_and_helper_export,
+        test_native_polish_and_size_controls,
     ):
         test()
         print("PASS", test.__name__)

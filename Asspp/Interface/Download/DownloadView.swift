@@ -84,7 +84,7 @@ struct DownloadView: View {
                     } label: {
                         Text("Add Download")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(VeloPillButtonStyle(prominent: true))
                 }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
@@ -104,7 +104,7 @@ struct DownloadView: View {
                     Text(selectedIDs.count == 1 ? "Prepare Decryptor" : "Prepare \(selectedIDs.count) Apps")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(VeloPillButtonStyle(prominent: true))
                 .disabled(selectedIDs.isEmpty || decryptor.isPreparingBatch)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
@@ -199,10 +199,9 @@ private struct PackageManifestRow: View {
                         } label: {
                             Image(systemName: "lock.open.fill")
                                 .font(.system(size: 17, weight: .semibold))
-                                .frame(width: 40, height: 40)
+                                .frame(width: 52)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(AssppTheme.accent)
+                        .buttonStyle(VeloPillButtonStyle())
                         .disabled(decryptor.status(for: manifest) == .preparing)
                         .accessibilityLabel("Decrypt IPA")
                     }

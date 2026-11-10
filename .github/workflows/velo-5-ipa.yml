@@ -1,8 +1,8 @@
-name: Velo 5.1 - Monochrome Native
+name: Velo 5.2 - Native Lightweight
 
 on:
   push:
-    branches: [velo-v5-development, velo-v5-1-monochrome]
+    branches: [velo-v5-development, velo-v5-1-monochrome, velo-v5-2-native-polish]
     paths:
       - "Asspp/Backend/AppStore/**"
       - "Asspp/Interface/Download/PackageView.swift"
@@ -65,6 +65,13 @@ jobs:
           sudo xcode-select -s "$best_path"
           xcodebuild -version
           command -v xcbeautify >/dev/null || brew install xcbeautify
+      - name: Restore SwiftPM source and transport-test cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build-authfix/PackageTests
+            .build-authfix/SourcePackages
+          key: velo-5.2-macos26-swiftpm-${{ hashFiles('Resources/AuthFix/*.swift', 'Resources/AuthFix/prepare.py', 'Asspp.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
       - name: Verify free-only license automation and Velo identity
         shell: bash
         run: |
@@ -82,6 +89,9 @@ jobs:
             Asspp/Interface/Download/DownloadView.swift \
             Asspp/Interface/Download/PackageView.swift \
             Asspp/Interface/Search/SearchView.swift \
+            Asspp/Interface/Search/ArchivePreviewView.swift \
+            Asspp/Interface/Search/PackageDisplayView.swift \
+            Asspp/Interface/Search/ProductView.swift \
             Asspp/Interface/Search/QuickDownloadButton.swift \
             Asspp/Interface/Setting/SettingView.swift \
             Asspp/Interface/Welcome/MainView.swift \
@@ -223,12 +233,12 @@ jobs:
           R6_TCI_ARCHIVE: ${{ github.workspace }}/.ci-cache/libunicorn.a
         run: |
           set -euo pipefail
-          sed -i '' -e 's/4.2.7/5.1.0/g' -e 's/2026110705/2026111001/g' Resources/AuthFix/build.sh
+          sed -i '' -e 's/4.2.7/5.2.0/g' -e 's/2026110705/2026111002/g' Resources/AuthFix/build.sh
           bash Resources/AuthFix/build.sh
-          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.1.0-Monochrome-unsigned.ipa
-          shasum -a 256 artifacts/Velo-5.1.0-Monochrome-unsigned.ipa > artifacts/Velo-5.1.0-Monochrome-unsigned.ipa.sha256
-          unzip -Z -1 artifacts/Velo-5.1.0-Monochrome-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
-          unzip -p artifacts/Velo-5.1.0-Monochrome-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.2.0-Native-unsigned.ipa
+          shasum -a 256 artifacts/Velo-5.2.0-Native-unsigned.ipa > artifacts/Velo-5.2.0-Native-unsigned.ipa.sha256
+          unzip -Z -1 artifacts/Velo-5.2.0-Native-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
+          unzip -p artifacts/Velo-5.2.0-Native-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -tq "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayed'
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayedIcon.png'
@@ -251,10 +261,10 @@ jobs:
       - name: Upload Velo IPA and diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: Velo-5.1.0-Monochrome-unsigned
+          name: Velo-5.2.0-Native-unsigned
           path: |
-            artifacts/Velo-5.1.0-Monochrome-unsigned.ipa
-            artifacts/Velo-5.1.0-Monochrome-unsigned.ipa.sha256
+            artifacts/Velo-5.2.0-Native-unsigned.ipa
+            artifacts/Velo-5.2.0-Native-unsigned.ipa.sha256
             artifacts/build-info.json
             artifacts/transport-tests.log
             artifacts/sap-setup-probe-result.txt

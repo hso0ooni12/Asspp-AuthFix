@@ -160,7 +160,11 @@ struct SearchView: View {
                     ForEach(searchResult) { item in
                         HStack(spacing: 12) {
                             NavigationLink(value: ProductDestination(archive: item, region: region(for: item))) {
-                                ArchivePreviewView(archive: item)
+                                ArchivePreviewView(
+                                    archive: item, preferredIconSize: 60,
+                                    showsVersion: false, showsRating: true,
+                                    storefront: searchRegion == "ALL" ? region(for: item) : nil
+                                )
                             }
                             .buttonStyle(.plain)
                             QuickDownloadButton(package: item, region: region(for: item))
@@ -407,17 +411,16 @@ extension SearchView {
                         ForEach(searchResult) { item in
                             HStack(spacing: 10) {
                                 NavigationLink(value: ProductDestination(archive: item, region: region(for: item))) {
-                                    ArchivePreviewView(archive: item)
+                                    ArchivePreviewView(
+                                        archive: item, preferredIconSize: 60,
+                                        showsVersion: false, showsRating: true,
+                                        storefront: searchRegion == "ALL" ? region(for: item) : nil
+                                    )
                                 }
                                 .buttonStyle(.plain)
-                                if searchRegion == "ALL" {
-                                    Text(region(for: item))
-                                        .font(.caption2.monospaced())
-                                        .foregroundStyle(.secondary)
-                                }
                                 QuickDownloadButton(package: item, region: region(for: item))
                             }
-                            .padding(.vertical, 4)
+                            .padding(.vertical, 3)
                         }
                     }
                 }

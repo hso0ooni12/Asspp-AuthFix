@@ -54,18 +54,9 @@ struct ProductView: View {
 
     var body: some View {
         Form {
-            Section {
-                AssppScreenHeader(
-                    eyebrow: "APP STORE  /  PACKAGE",
-                    title: "Get this app",
-                    subtitle: "Choose an account and save the package to your downloads.",
-                    symbol: "square.and.arrow.down"
-                )
-            }
-            .listRowBackground(Color.clear)
-            accountSelector
-            buttons
             packageHeader
+            buttons
+            accountSelector
             packageDetails
             packageDescription
             if account == nil {
@@ -94,7 +85,7 @@ struct ProductView: View {
         .navigationDestination(for: PackageManifest.self) { manifest in
             PackageView(pkg: manifest)
         }
-        .navigationTitle("Select Account")
+        .navigationTitle("App Details")
     }
 
     var packageHeader: some View {
@@ -201,8 +192,13 @@ struct ProductView: View {
                         throw error
                     }
                 } label: {
-                    Text(requestingDownload ? "Preparing download..." : "Request Download")
+                    if requestingDownload {
+                        ProgressView().tint(AssppTheme.accent)
+                    } else {
+                        Text("GET")
+                    }
                 }
+                .buttonStyle(VeloPillButtonStyle())
                 .disabledWhenLoading()
                 .disabled(account == nil)
             }

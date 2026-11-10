@@ -95,6 +95,22 @@ xcodebuild -workspace Asspp.xcworkspace -scheme Asspp -configuration Release \
   INFOPLIST_KEY_CFBundleDisplayName='Velo' INFOPLIST_KEY_CFBundleName='Velo' \
   "${extra_xcodebuild_flags[@]}" build 2>&1 | tee artifacts/build.log | xcbeautify
 
+# The no-JIT Unicorn runtime is force-loaded and exports functions discovered
+# with dlsym(). Strip local/debug symbols only: keeping exported globals is
+# essential to decrypt/download behavior while reducing the packaged IPA.
+app_executable=".build-authfix/DerivedData/Build/Products/Release-iphoneos/Asspp.app/Asspp"
+if [[ -n "${R6_TCI_ARCHIVE:-}" ]]; then
+  size_before="$(stat -f%z "${app_executable}")"
+  xcrun strip -x -S "${app_executable}"
+  xcrun nm -gU "${app_executable}" > .build-authfix/linked-exports.txt
+  for symbol in _uc_version _uc_open _R3GenerateKBSync; do
+    grep -Eq "[[:space:]]${symbol}\$" .build-authfix/linked-exports.txt || {
+      echo "::error::Preserved native API ${symbol} is missing after safe stripping"; exit 1;
+    }
+  done
+  echo "Release executable: ${size_before} -> $(stat -f%z "${app_executable}") bytes (non-global symbols stripped)"
+fi
+
 # Xcode synthesizes CFBundleName from PRODUCT_NAME after processing the
 # INFOPLIST_KEY override. Keep the executable and bundle identifier untouched
 # for existing installs, but set the app's user-facing short name in the IPA.
