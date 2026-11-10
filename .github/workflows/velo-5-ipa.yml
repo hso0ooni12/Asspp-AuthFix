@@ -38,7 +38,9 @@ concurrency:
 
 jobs:
   build-velo-ios:
-    runs-on: macos-26
+    # macos-26 runners can be cancelled before allocation during capacity spikes.
+    # The app targets iOS 17+, so macos-15/Xcode 16.x also builds this target.
+    runs-on: macos-15
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
