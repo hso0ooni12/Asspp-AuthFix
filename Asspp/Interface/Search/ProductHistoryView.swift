@@ -11,39 +11,44 @@ import SwiftUI
 struct ProductHistoryView: View {
     @State var vm: AppPackageArchive
     @State private var showErrorAlert = false
+    @State private var downloadingVersions: Set<String> = []
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
         Form {
             ForEach(vm.versionIdentifiers, id: \.self) { key in
-                if let aid = vm.accountIdentifier, let pkg = vm.package(for: key) {
-                    Menu {
-                        Button("Download \(pkg.software.version)") {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(vm.versionItems[key]?.displayVersion ?? "Version ID \(key)")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(.primary)
+                        if let date = vm.versionItems[key]?.releaseDate, date != .distantPast {
+                            Text(date, style: .date)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    if let accountID = vm.accountIdentifier, let pkg = vm.package(for: key) {
+                        Button {
+                            downloadingVersions.insert(key)
                             Task {
+                                defer { downloadingVersions.remove(key) }
                                 do {
-                                    try await Downloads.this.startDownload(for: pkg, accountID: aid)
+                                    try await Downloads.this.startDownload(for: pkg, accountID: accountID)
                                 } catch {
                                     vm.error = error.localizedDescription
                                 }
                             }
+                        } label: {
+                            if downloadingVersions.contains(key) {
+                                ProgressView().tint(.primary)
+                            } else {
+                                Text("GET")
+                            }
                         }
-                    } label: {
-                        HStack {
-                            Text(pkg.software.version)
-                                .foregroundStyle(.accent)
-                            Spacer()
-                        }
-                        .contentShape(Rectangle())
-                    }
-                } else {
-                    Button {
-                        vm.populateVersionItem(for: key)
-                    } label: {
-                        HStack {
-                            Text(key).foregroundStyle(.secondary)
-                            Spacer()
-                        }
-                        .contentShape(Rectangle())
+                        .buttonStyle(VeloPillButtonStyle())
+                        .disabled(downloadingVersions.contains(key))
                     }
                 }
             }
@@ -58,7 +63,7 @@ struct ProductHistoryView: View {
                     .progressViewStyle(.circular)
                     .smallControlSizeOnMac()
             }
-            .opacity(vm.loading ? 1 : 0)
+            .opacity(vm.loading && vm.versionIdentifiers.isEmpty ? 1 : 0)
             .animation(.default, value: vm.loading)
             .ignoresSafeArea(edges: [.vertical])
         }
@@ -114,9 +119,12 @@ struct ProductHistoryView: View {
             showErrorAlert = newValue != nil
         }
         .onAppear {
-            guard vm.versionItems.isEmpty else { return }
-            vm.populateVersionIdentifiers {
-                await MainActor.run { vm.populateNextVersionItems() }
+            if vm.versionIdentifiers.isEmpty {
+                vm.populateVersionIdentifiers {
+                    await MainActor.run { vm.populateNextVersionItems() }
+                }
+            } else if !vm.isVersionItemsFullyLoaded {
+                vm.populateNextVersionItems()
             }
         }
     }

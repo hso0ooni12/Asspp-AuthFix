@@ -51,9 +51,14 @@ class AppPackageArchive {
     }
 
     var isVersionItemsFullyLoaded: Bool {
-        assert(versionItems.count <= versionIdentifiers.count)
-        return versionItems.count == versionIdentifiers.count
+        versionIdentifiers.allSatisfy { versionItems[$0] != nil || unavailableVersionIDs.contains($0) }
     }
+
+    /// A single historical build may no longer expose details on Apple's
+    /// endpoint. Keep the rest of the history usable instead of getting stuck
+    /// at the first missing entry.
+    @ObservationIgnored
+    private var unavailableVersionIDs: Set<String> = []
 
     var error: String?
     var loading = false
@@ -71,20 +76,29 @@ class AppPackageArchive {
         _versionIdentifiers = Persist(key: "\(packageIdentifier).versionNumbers", defaultValue: [])
     }
 
+    /// History lookups touch the same mutable account cookie jar as downloads.
+    /// Avoid a background history refresh overwriting the account state of a
+    /// concurrent download preparation.
+    private func withLockedAccount<T>(id: String,
+                                      _ body: (inout AppStore.UserAccount) async throws -> T) async throws -> T
+    {
+        await AccountDownloadGate.shared.acquire(id)
+        defer { Task { await AccountDownloadGate.shared.release(id) } }
+        return try await AppStore.this.withAccount(id: id, body)
+    }
+
     func package(for externalVersion: String) -> AppStore.AppPackage? {
-        if let metadata = versionItems[externalVersion] {
-            var pkg = package
-            pkg.software.version = metadata.displayVersion
-            pkg.externalVersionID = externalVersion
-            return pkg
-        } else {
-            return nil
-        }
+        guard versionIdentifiers.contains(externalVersion) else { return nil }
+        var pkg = package
+        pkg.software.version = versionItems[externalVersion]?.displayVersion ?? "ID \(externalVersion)"
+        pkg.externalVersionID = externalVersion
+        return pkg
     }
 
     func clearVersionItems() {
         assert(!loading)
         error = nil
+        unavailableVersionIDs.removeAll()
         versionIdentifiers = []
         versionItems = [:]
     }
@@ -97,10 +111,11 @@ class AppPackageArchive {
 
         Task {
             do {
-                let versions = try await AppStore.this.withAccount(id: accountIdentifier) { userAccount in
+                let versions = try await self.withLockedAccount(id: accountIdentifier) { userAccount in
                     try await StoreDownloadService.versions(account: &userAccount.account, package: requestedPackage)
                 }
-                self.versionIdentifiers = versions.reversed()
+                self.versionIdentifiers = Array(versions.reversed())
+                self.unavailableVersionIDs.formIntersection(self.versionIdentifiers)
             } catch {
                 if case .licenseRequired = error as? ApplePackageError {
                     self.shouldDismiss = true
@@ -118,19 +133,22 @@ class AppPackageArchive {
         error = nil
 
         Task {
-            do {
-                for _ in 0 ..< count where !self.isVersionItemsFullyLoaded {
-                    let nextIdx = self.versionItems.count
-                    let version = self.versionIdentifiers[nextIdx]
-                    let requestedPackage = self.package
-
-                    let metadata = try await AppStore.this.withAccount(id: accountIdentifier) { userAccount in
+            for _ in 0 ..< count {
+                guard let version = self.versionIdentifiers.first(where: {
+                    self.versionItems[$0] == nil && !self.unavailableVersionIDs.contains($0)
+                }) else { break }
+                let requestedPackage = self.package
+                do {
+                    let metadata = try await self.withLockedAccount(id: accountIdentifier) { userAccount in
                         try await StoreDownloadService.versionMetadata(account: &userAccount.account, package: requestedPackage, versionID: version)
                     }
                     self.versionItems[version] = metadata
+                } catch {
+                    // Preserve the ID as a selectable version even when
+                    // its display date/name cannot be resolved.
+                    self.unavailableVersionIDs.insert(version)
+                    logger.info("Version metadata unavailable for one historical entry; continuing the remaining entries")
                 }
-            } catch {
-                self.error = error.localizedDescription
             }
             self.loading = false
         }
@@ -144,12 +162,13 @@ class AppPackageArchive {
         Task {
             do {
                 let requestedPackage = self.package
-                let metadata = try await AppStore.this.withAccount(id: accountIdentifier) { userAccount in
+                let metadata = try await self.withLockedAccount(id: accountIdentifier) { userAccount in
                     try await StoreDownloadService.versionMetadata(account: &userAccount.account, package: requestedPackage, versionID: versionID)
                 }
                 self.versionItems[versionID] = metadata
             } catch {
-                self.error = error.localizedDescription
+                self.unavailableVersionIDs.insert(versionID)
+                logger.info("Historical version details unavailable; version ID remains downloadable")
             }
             self.loading = false
         }

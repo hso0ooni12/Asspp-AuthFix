@@ -82,7 +82,7 @@ struct DownloadPreparationStatus {
 /// it back. Overlapping requests for different apps on the same Apple ID can
 /// overwrite one another. Serialize only account metadata/license work; the
 /// large IPA transfers still run concurrently (two at a time).
-private actor AccountDownloadGate {
+actor AccountDownloadGate {
     static let shared = AccountDownloadGate()
     private var held: Set<String> = []
     private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
@@ -166,9 +166,16 @@ extension Downloads {
                     downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
                 }
                 pendingPreparations[key] = .init(appName: package.software.name, stage: .preparingTransfer)
+                var resolvedPackage = package
+                // Historical rows may only have an external build ID until
+                // Apple returns full metadata. Persist the actual app version
+                // from the validated download ticket, not a placeholder ID.
+                if !downloadOutput.bundleShortVersionString.isEmpty {
+                    resolvedPackage.software.version = downloadOutput.bundleShortVersionString
+                }
                 let request = try Downloads.this.add(request: .init(
                     account: account,
-                    package: package,
+                    package: resolvedPackage,
                     downloadOutput: downloadOutput,
                 ))
                 Downloads.this.resume(request: request)

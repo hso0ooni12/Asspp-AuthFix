@@ -18,6 +18,51 @@ struct DownloadProtocolChecks {
         precondition(requests[1].0 == .redownload && requests[1].1 == "890598805" && lookups == 1)
         _ = try StoreDownloadProtocol.packageItem(result, bundleID: "example.app")
 
+        // Intermittent Apple 5xx/network errors must recover automatically,
+        // without treating auth/403/license failures as retryable.
+        requests = []
+        _ = try await StoreDownloadProtocol.fetchWithFallback(version: "12345") { endpoint, version in
+            requests.append((endpoint, version))
+            if endpoint == .volumeStore { throw StoreDownloadError.response(503) }
+            return success
+        } resolveVersion: { fatalError("Historical version ID was dropped") } onFallback: {
+            precondition($0 == "volumeStore-transient")
+        }
+        precondition(requests.map(\.0) == [.volumeStore, .redownload])
+        precondition(requests.allSatisfy { $0.1 == "12345" })
+
+        requests = []
+        _ = try await StoreDownloadProtocol.fetchWithFallback(version: "12345") { endpoint, _ in
+            requests.append((endpoint, "12345"))
+            switch endpoint {
+            case .volumeStore: return empty
+            case .redownload: throw StoreDownloadError.response(502)
+            case .update: return success
+            }
+        } resolveVersion: { fatalError("Unexpected catalog lookup") } onFallback: { _ in }
+        precondition(requests.map(\.0) == [.volumeStore, .redownload, .update])
+        precondition(!StoreDownloadProtocol.isTransientHTTPStatus(403))
+        precondition(!StoreDownloadProtocol.isTransientNetworkError(
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)))
+        precondition(StoreDownloadProtocol.isTransientNetworkError(
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost)))
+        precondition(DownloadTransferRetryPolicy.shouldRetry(
+            error: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut), previousRetries: 1))
+        precondition(!DownloadTransferRetryPolicy.shouldRetry(
+            error: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut), previousRetries: 2))
+        precondition(DownloadTransferRetryPolicy.shouldRetry(
+            error: NSError(domain: "DiggerErrorDomain", code: 1, userInfo: ["statusCode": 503]), previousRetries: 0))
+        precondition(!DownloadTransferRetryPolicy.shouldRetry(
+            error: NSError(domain: "DiggerErrorDomain", code: 1, userInfo: ["statusCode": 403]), previousRetries: 0))
+
+        let historical = try StoreDownloadProtocol.historyIdentifiers(from: ["metadata": [
+            "softwareVersionExternalIdentifiers": [123, "124", 123, "bad"],
+        ]])
+        precondition(historical == ["123", "124"])
+        precondition(StoreDownloadProtocol.historyDisplayVersion(metadata: [:], externalID: "123") == "ID 123")
+        precondition(StoreDownloadProtocol.historyDisplayVersion(
+            metadata: ["bundleShortVersionString": " 1.2.3 "], externalID: "123") == "1.2.3")
+
         // Preserve historical IDs on both endpoints; numeric 5002 is retryable.
         requests = []
         _ = try await StoreDownloadProtocol.fetchWithFallback(version: "12345") { endpoint, version in
@@ -40,7 +85,8 @@ struct DownloadProtocolChecks {
         precondition(requests.map(\.0) == [.volumeStore, .redownload, .update])
         precondition(requests.allSatisfy { $0.1 == "12345" })
 
-        // Other failures do not qualify, and a failed update never loops.
+        // A temporary redownload failure gets one update fallback; a failed
+        // update never loops back to the beginning.
         for failure in [StoreDownloadError.response(500), .emptyResponse(503), .emptyResponse(500)] {
             requests = []
             do {
@@ -53,11 +99,7 @@ struct DownloadProtocolChecks {
                 } resolveVersion: { fatalError("Unexpected lookup") } onFallback: { _ in }
                 fatalError("Ignored a failed download response")
             } catch {
-                if case StoreDownloadError.emptyResponse(500) = failure {
-                    precondition(requests.count == 3 && requests.last?.0 == .update)
-                } else {
-                    precondition(requests.count == 2)
-                }
+                precondition(requests.count == 3 && requests.last?.0 == .update)
             }
         }
 

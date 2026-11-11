@@ -7,9 +7,9 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "5.3.0"
-BUILD = "2026111003"
-IPA_NAME = "Velo-5.3.0-Smart-Fast-unsigned.ipa"
+VERSION = "5.3.1"
+BUILD = "2026111101"
+IPA_NAME = "Velo-5.3.1-Reliable-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()
@@ -76,12 +76,18 @@ def validate_sources():
     assert "DownloadRouteAdvisor.shared.fallbackSucceededAfterPreferredFailure" in service
     assert "isPreferredTransportFailure" in service
     protocol = (ROOT / "Asspp/Backend/AppStore/StoreDownloadProtocol.swift").read_text()
-    assert 'onFallback("volumeStore-timeout")' in protocol
+    assert 'onFallback("volumeStore-transient")' in protocol
+    assert "DownloadTransferRetryPolicy" in protocol and "historyIdentifiers" in protocol
+    assert "dataWithRetry(session: session, request: request" in service
+    archive = (ROOT / "Asspp/Backend/AppStore/AppPackageArchive.swift").read_text()
+    assert "first(where:" in archive and "unavailableVersionIDs" in archive
+    assert "withLockedAccount" in archive
+    assert "automaticTransferRetries" in manager and "transferAttemptTokens" in manager
     for name in ["Account/AccountView", "Download/DownloadView", "Search/SearchView", "Setting/SettingView", "Welcome/MainView"]:
         code = (ROOT / ("Asspp/Interface/" + name + ".swift")).read_text()
         assert "ASS•PP" not in code, name
     assert not (ROOT / "Asspp/Backend/Decryption/DirectFairPlayed.swift").exists()
-    print("PASS Velo 5.3 smart route cooldown, parallel storefront search and stable download core")
+    print("PASS Velo 5.3.1 bounded transient retries, historical versions, route cooldown and stable core")
 
 def validate_archive():
     spec = importlib.util.spec_from_file_location("r17_checks", ROOT / "Resources/R17/verify_release.py")
@@ -105,14 +111,14 @@ def validate_archive():
     path = ROOT / "artifacts/build-info.json"
     report = json.loads(path.read_text())
     report.update(
-        release="Velo 5.3 Smart Fast Native on stable R18/R20 core",
+        release="Velo 5.3.1 Reliable Downloads on stable R18/R20 core",
         displayName="Velo",
         preservesBundleIdentifier=True,
         quickDownloadFromSearch=True,
         autoFreeLicenseOnDownload=True,
         autoPaidPurchase=False,
         loginSAPPreconnect=True,
-        downloadTransport="R20 per-request URLSession with account-scoped temporary R3 cooldown",
+        downloadTransport="R20 per-request URLSession with temporary R3 cooldown and bounded transient retries",
         directDecryptionOfNewDownloads=False,
         deviceValidation="Physical iPhone testing required for sign-in and free license requests",
         measuredSpeedImprovement="not benchmarked in CI",

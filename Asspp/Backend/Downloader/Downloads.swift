@@ -32,6 +32,10 @@ class Downloads {
     @ObservationIgnored
     private var registeredCallbacks: Set<UUID> = []
 
+    /// Ignore duplicate or late Digger completion callbacks for an old seed.
+    @ObservationIgnored private var transferAttemptTokens: [UUID: UUID] = [:]
+    @ObservationIgnored private var automaticTransferRetries: [UUID: Int] = [:]
+
     /// Limit transfers to two independent IPAs. Apple's metadata/auth requests
     /// are serialized per account separately; byte transfers can overlap.
     @ObservationIgnored private var activeTransferIDs: Set<UUID> = []
@@ -142,6 +146,8 @@ class Downloads {
             saveManifests()
             return
         }
+        let attemptToken = UUID()
+        transferAttemptTokens[request.id] = attemptToken
 
         seed
             .speed { speedBytes in
@@ -190,6 +196,8 @@ class Downloads {
             }
             .completion { completion in
                 Task { @MainActor in
+                    guard self.transferAttemptTokens[request.id] == attemptToken else { return }
+                    self.transferAttemptTokens.removeValue(forKey: request.id)
                     self.registeredCallbacks.remove(request.id)
                     self.lastSpeedUpdates.removeValue(forKey: request.id)
                     self.lastProgressUpdates.removeValue(forKey: request.id)
@@ -199,6 +207,7 @@ class Downloads {
                     }
                     switch completion {
                     case let .success(url):
+                        self.automaticTransferRetries.removeValue(forKey: request.id)
                         self.finalizingIDs.insert(request.id)
                         Task.detached {
                             do {
@@ -242,7 +251,26 @@ class Downloads {
                             // User-initiated cancellation via cancelTask(), not an error
                         } else if error is CancellationError {
                             // Swift structured concurrency cancellation
+                        } else if DownloadTransferRetryPolicy.shouldRetry(
+                            error: error,
+                            previousRetries: self.automaticTransferRetries[request.id] ?? 0
+                        ) {
+                            let retry = (self.automaticTransferRetries[request.id] ?? 0) + 1
+                            self.automaticTransferRetries[request.id] = retry
+                            request.state.start()
+                            self.saveManifests()
+                            logger.info("Temporary IPA transfer failure; automatic resume \(retry)/\(DownloadTransferRetryPolicy.maximumAutomaticRetries)")
+                            self.releaseTransferSlot(request.id)
+                            self.refreshRunningTaskCount()
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(retry * 700))
+                                guard self.manifests.contains(where: { $0.id == request.id }),
+                                      request.state.status == .pending else { return }
+                                self.resume(request: request)
+                            }
+                            return
                         } else {
+                            self.automaticTransferRetries.removeValue(forKey: request.id)
                             request.state.error = error.localizedDescription
                             self.saveManifests()
                         }
@@ -297,6 +325,8 @@ class Downloads {
             DiggerManager.shared.cancelTask(for: request.url)
         }
         registeredCallbacks.remove(request.id)
+        transferAttemptTokens.removeValue(forKey: request.id)
+        automaticTransferRetries.removeValue(forKey: request.id)
         releaseTransferSlot(request.id)
         if !finalizingIDs.contains(request.id) { request.delete() }
         lastProgressUpdates.removeValue(forKey: request.id)
@@ -309,6 +339,8 @@ class Downloads {
         logger.info("restarting download request id: \(request.id)")
         DiggerManager.shared.cancelTask(for: request.url)
         registeredCallbacks.remove(request.id)
+        transferAttemptTokens.removeValue(forKey: request.id)
+        automaticTransferRetries.removeValue(forKey: request.id)
         lastProgressUpdates.removeValue(forKey: request.id)
         lastSpeedUpdates.removeValue(forKey: request.id)
         releaseTransferSlot(request.id)

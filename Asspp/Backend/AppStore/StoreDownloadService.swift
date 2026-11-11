@@ -22,23 +22,55 @@ enum StoreDownloadService {
     }
 
     static func versions(account: inout Account, package: AppStore.AppPackage) async throws -> [String] {
-        try await product(account: &account, package: package, version: nil, operation: "versions") { item in
-            guard let metadata = item["metadata"] as? [String: Any],
-                  let identifiers = metadata["softwareVersionExternalIdentifiers"] as? [Any]
-            else { throw StoreDownloadError.noVersions }
-            let versions = identifiers.map { StoreProtocol.string($0) }.filter { !$0.isEmpty }
-            guard !versions.isEmpty else { throw StoreDownloadError.noVersions }
-            return versions
+        do {
+            return try await product(account: &account, package: package,
+                                     version: package.externalVersionID, operation: "versions") { item in
+                try StoreDownloadProtocol.historyIdentifiers(from: item)
+            }
+        } catch {
+            guard let failure = error as? StoreDownloadError else { throw error }
+            switch failure {
+            case .noVersions, .empty: break
+            default: throw error
+            }
+            // Apple's unpinned response sometimes omits the history array.
+            // Query the current version for the exact store and platform, then
+            // ask for its metadata explicitly. Never substitute another app.
+            guard let region = Configuration.countryCode(for: account.store) else {
+                throw StoreDownloadError.noVersions
+            }
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 20
+            configuration.timeoutIntervalForResource = 40
+            let session = URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
+            defer { session.invalidateAndCancel() }
+            let current: StoreDownloadProtocol.CatalogVersion
+            do {
+                current = try await catalogVersion(session: session, appID: package.software.id,
+                                                   region: region, platform: package.entityType ?? .iPhone,
+                                                   trace: "history")
+            } catch {
+                throw StoreDownloadError.noVersions
+            }
+            guard current.bundleID == nil || current.bundleID == package.software.bundleID else {
+                throw StoreDownloadError.noVersions
+            }
+            return try await product(account: &account, package: package,
+                                     version: current.externalVersionID, operation: "versions-pinned") { item in
+                try StoreDownloadProtocol.historyIdentifiers(from: item)
+            }
         }
     }
 
     static func versionMetadata(account: inout Account, package: AppStore.AppPackage, versionID: String) async throws -> VersionMetadata {
         try await product(account: &account, package: package, version: versionID, operation: "version-metadata") { item in
-            guard let metadata = item["metadata"] as? [String: Any],
-                  let version = metadata["bundleShortVersionString"] as? String,
-                  let dateString = metadata["releaseDate"] as? String,
-                  let releaseDate = ISO8601DateFormatter().date(from: dateString)
-            else { throw StoreDownloadError.invalidPackage }
+            let metadata = item["metadata"] as? [String: Any] ?? [:]
+            let version = StoreDownloadProtocol.historyDisplayVersion(metadata: metadata, externalID: versionID)
+            let dateString = metadata["releaseDate"] as? String ?? ""
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let releaseDate = ISO8601DateFormatter().date(from: dateString)
+                ?? fractional.date(from: dateString) ?? .distantPast
             return VersionMetadata(displayVersion: version, releaseDate: releaseDate)
         }
     }
@@ -128,7 +160,7 @@ enum StoreDownloadService {
                     logger.info("Store download [\(trace)]: catalog version=\(metadata.externalVersionID)")
                     return metadata.externalVersionID
                 } onFallback: { reason in
-                    logger.info("Store download [\(trace)]: trying \(reason == "empty-redownload-http500" ? "update" : "redownload"), reason=\(reason)")
+                    logger.info("Store download [\(trace)]: trying \(reason.hasPrefix("redownload-") ? "update" : "redownload"), reason=\(reason)")
                 }
             }
             // Surface license-missing to the one-tap download coordinator.
@@ -184,7 +216,7 @@ enum StoreDownloadService {
         request.setValue(Configuration.userAgent, forHTTPHeaderField: "User-Agent")
         // No credentials and no automatic redirects. Foundation verifies TLS in
         // Debug too (ApplePackage 1.2.7 disables verification in its Debug client).
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await dataWithRetry(session: session, request: request, trace: trace)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         logger.info("Store download [\(trace)]: catalog HTTP=\(status) bytes=\(data.count)")
         guard status == 200 else { throw StoreDownloadError.catalogUnavailable }
@@ -227,7 +259,7 @@ enum StoreDownloadService {
                 request.setValue(value, forHTTPHeaderField: name)
             }
             logger.info("Store download [\(trace)]: endpoint=\(endpoint.rawValue) hop=\(redirect) sessionCookie=\(request.value(forHTTPHeaderField: "Cookie") != nil)")
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await dataWithRetry(session: session, request: request, trace: trace)
             guard let response = response as? HTTPURLResponse else { throw StoreDownloadError.response(0) }
             mergeCookies(response: response, url: url, account: &account)
             logger.info("Store download [\(trace)]: endpoint=\(endpoint.rawValue) HTTP=\(response.statusCode) bytes=\(data.count)")
@@ -305,7 +337,7 @@ enum StoreDownloadService {
             request.setValue(value, forHTTPHeaderField: name)
         }
         logger.info("Store download [\(trace)]: endpoint=ent/download request starting")
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await dataWithRetry(session: session, request: request, trace: trace)
         guard let response = response as? HTTPURLResponse else { throw StoreDownloadError.response(0) }
         logger.info("Store download [\(trace)]: endpoint=ent/download HTTP=\(response.statusCode) bytes=\(data.count)")
         // No re-POST on redirects, ever. Responses are validated before use.
@@ -335,6 +367,33 @@ enum StoreDownloadService {
             account.cookie.append(Cookie(name: cookie.name, value: cookie.value, path: cookie.path, domain: domain,
                                          expiresAt: cookie.expiresDate?.timeIntervalSince1970, httpOnly: cookie.isHTTPOnly, secure: cookie.isSecure))
         }
+    }
+
+    /// A one-time retry hides short Apple CDN/dispatch failures without
+    /// repeating purchases or account auth. Signed URLs and tokens are never
+    /// written to diagnostics, and cancellation exits immediately.
+    private static func dataWithRetry(session: URLSession, request: URLRequest,
+                                      trace: String) async throws -> (Data, URLResponse)
+    {
+        for attempt in 0 ..< 2 {
+            try Task.checkCancellation()
+            do {
+                let result = try await session.data(for: request)
+                let status = (result.1 as? HTTPURLResponse)?.statusCode ?? 0
+                if attempt == 0, StoreDownloadProtocol.isTransientHTTPStatus(status) {
+                    logger.info("Store download [\(trace)]: temporary HTTP=\(status), retrying metadata request once")
+                    try await Task.sleep(for: .milliseconds(400))
+                    continue
+                }
+                return result
+            } catch {
+                try Task.checkCancellation()
+                guard attempt == 0, StoreDownloadProtocol.isTransientNetworkError(error) else { throw error }
+                logger.info("Store download [\(trace)]: temporary network error, retrying metadata request once")
+                try await Task.sleep(for: .milliseconds(400))
+            }
+        }
+        throw StoreDownloadError.response(0)
     }
 
     /// ApplePackage's DownloadOutput format, also consumed by SignatureInjector.

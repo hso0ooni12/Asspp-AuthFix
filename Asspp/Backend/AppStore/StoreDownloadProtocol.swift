@@ -26,7 +26,7 @@ enum StoreDownloadError: LocalizedError {
         case .actionRequired:
             String(localized: "Apple requires an account confirmation. Open the App Store with this account, complete any prompts, then try again.")
         case .noVersions:
-            String(localized: "Apple returned no version history for this app and platform.")
+            String(localized: "Apple did not provide version history for this app. Check that the selected account owns the app in this store, or try another storefront.")
         case let .rejected(code, message):
             message.isEmpty ? String(localized: "Apple rejected the download (code: \(code)).") : message
         }
@@ -35,6 +35,51 @@ enum StoreDownloadError: LocalizedError {
 
 /// Response classification and request rules without credentials or networking.
 enum StoreDownloadProtocol {
+    /// Only repeat idempotent metadata/download-ticket requests, never account
+    /// purchases, authentication or license acquisition.
+    static func isTransientHTTPStatus(_ status: Int) -> Bool {
+        [408, 429, 500, 502, 503, 504].contains(status)
+    }
+
+    static func isTransientNetworkError(_ error: Error) -> Bool {
+        let failure = error as NSError
+        guard failure.domain == NSURLErrorDomain else { return false }
+        return [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost,
+                NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost,
+                NSURLErrorDNSLookupFailed, NSURLErrorNotConnectedToInternet,
+                NSURLErrorInternationalRoamingOff].contains(failure.code)
+    }
+
+    static func isTransientRequestFailure(_ error: Error) -> Bool {
+        if isTransientNetworkError(error) { return true }
+        if let failure = error as? StoreDownloadError {
+            switch failure {
+            case let .response(status), let .emptyResponse(status):
+                return isTransientHTTPStatus(status)
+            default:
+                return false
+            }
+        }
+        return false
+    }
+
+    static func historyIdentifiers(from item: [String: Any]) throws -> [String] {
+        let metadata = item["metadata"] as? [String: Any] ?? [:]
+        let raw = metadata["softwareVersionExternalIdentifiers"] as? [Any]
+            ?? item["softwareVersionExternalIdentifiers"] as? [Any] ?? []
+        var seen = Set<String>()
+        let versions = raw.map(StoreProtocol.string)
+            .filter { !$0.isEmpty && $0.allSatisfy({ $0.isASCII && $0.isNumber }) && seen.insert($0).inserted }
+        guard !versions.isEmpty else { throw StoreDownloadError.noVersions }
+        return versions
+    }
+
+    static func historyDisplayVersion(metadata: [String: Any], externalID: String) -> String {
+        let version = (metadata["bundleShortVersionString"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return version.isEmpty ? "ID \(externalID)" : version
+    }
+
     static func isMainInfoPlist(_ path: String) -> Bool {
         let components = path.split(separator: "/", omittingEmptySubsequences: false)
         return components.count == 3 && components[0] == "Payload"
@@ -154,11 +199,10 @@ enum StoreDownloadProtocol {
             primary = try await fetch(.volumeStore, version)
         } catch {
             try Task.checkCancellation()
-            let nsError = error as NSError
-            guard nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorTimedOut else {
+            guard isTransientRequestFailure(error) else {
                 throw error
             }
-            onFallback("volumeStore-timeout")
+            onFallback("volumeStore-transient")
             let resolved: String = if let version, !version.isEmpty {
                 version
             } else {
@@ -167,8 +211,10 @@ enum StoreDownloadProtocol {
             guard !resolved.isEmpty else { throw StoreDownloadError.catalogUnavailable }
             do {
                 return try await fetch(.redownload, resolved)
-            } catch StoreDownloadError.emptyResponse(500) {
-                onFallback("empty-redownload-http500")
+            } catch {
+                try Task.checkCancellation()
+                guard isTransientRequestFailure(error) else { throw error }
+                onFallback("redownload-transient")
                 return try await fetch(.update, resolved)
             }
         }
@@ -182,8 +228,10 @@ enum StoreDownloadProtocol {
         guard !resolved.isEmpty else { throw StoreDownloadError.catalogUnavailable }
         do {
             return try await fetch(.redownload, resolved)
-        } catch StoreDownloadError.emptyResponse(500) {
-            onFallback("empty-redownload-http500")
+        } catch {
+            try Task.checkCancellation()
+            guard isTransientRequestFailure(error) else { throw error }
+            onFallback("redownload-transient")
             return try await fetch(.update, resolved)
         }
     }
@@ -242,5 +290,21 @@ enum StoreDownloadProtocol {
             throw StoreDownloadError.invalidPackage
         }
         return item
+    }
+}
+
+/// Byte-transfer retries are separate from Apple account/license work. Digger
+/// can resume an incomplete IPA using HTTP Range on the same signed asset URL.
+enum DownloadTransferRetryPolicy {
+    static let maximumAutomaticRetries = 2
+
+    static func shouldRetry(error: Error, previousRetries: Int) -> Bool {
+        guard previousRetries < maximumAutomaticRetries else { return false }
+        if StoreDownloadProtocol.isTransientNetworkError(error) { return true }
+        let failure = error as NSError
+        if let status = failure.userInfo["statusCode"] as? Int {
+            return StoreDownloadProtocol.isTransientHTTPStatus(status)
+        }
+        return false
     }
 }
