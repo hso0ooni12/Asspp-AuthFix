@@ -26,7 +26,7 @@ enum StoreDownloadError: LocalizedError {
         case .actionRequired:
             String(localized: "Apple requires an account confirmation. Open the App Store with this account, complete any prompts, then try again.")
         case .noVersions:
-            String(localized: "Apple did not provide version history for this app. Check that the selected account owns the app in this store, or try another storefront.")
+            String(localized: "Apple returned no version history for this app and platform.")
         case let .rejected(code, message):
             message.isEmpty ? String(localized: "Apple rejected the download (code: \(code)).") : message
         }
