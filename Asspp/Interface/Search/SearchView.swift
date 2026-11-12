@@ -77,6 +77,7 @@ struct SearchView: View {
 
     @State private var navigationPath = NavigationPath()
     @State private var vm = AppStore.this
+    @State private var downloadCoordinator = Downloads.this
     @Environment(\.horizontalSizeClass) var horizontalSizeClass
     var possibleRegion: Set<String> {
         vm.possibleRegions
@@ -552,6 +553,24 @@ extension SearchView {
                 pinnedSearchField
                 storefrontFilters
                 List {
+                if !downloadCoordinator.pendingPreparations.isEmpty {
+                    Section("Preparing downloads") {
+                        ForEach(Array(downloadCoordinator.pendingPreparations.keys)
+                            .sorted(by: { $0.bundleID < $1.bundleID }), id: \.self) { key in
+                            if let prep = downloadCoordinator.pendingPreparations[key] {
+                                HStack(spacing: 12) {
+                                    ProgressView().tint(AssppTheme.accent)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(prep.appName).font(.subheadline.weight(.medium))
+                                        Text(prep.statusText)
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    }
+                }
                 if let searchError {
                     Label(searchError, systemImage: "exclamationmark.triangle")
                         .font(.footnote)

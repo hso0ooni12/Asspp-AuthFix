@@ -61,15 +61,19 @@ struct QuickDownloadButton: View {
                     "Downloading, \(Int(request.state.percent * 100)) percent. Show download")
                 .buttonStyle(VeloPillButtonStyle())
             } else if let pendingPreparation {
-                HStack(spacing: 5) {
-                    ProgressView().tint(AssppTheme.accent).controlSize(.mini)
-                    Text("WAIT")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.primary)
+                VStack(spacing: 3) {
+                    HStack(spacing: 5) {
+                        ProgressView().tint(AssppTheme.accent).controlSize(.mini)
+                        Text(pendingPreparation.compactLabel)
+                            .font(.system(size: 10, weight: .semibold))
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                    }
+                    Text("Preparing…")
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
                 }
-                .frame(width: 84, height: 44)
+                .frame(width: 98, height: 46)
                 .background(AssppTheme.elevated, in: Capsule())
-                .accessibilityLabel(pendingPreparation.stage.rawValue)
+                .accessibilityLabel(pendingPreparation.statusText)
             } else {
                 Button(action: selectAccount) {
                     Group {

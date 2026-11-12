@@ -67,14 +67,35 @@ struct DownloadRequestIdentity: Hashable {
 }
 
 enum DownloadRequestStage: String {
+    case waitingForAccount = "Waiting for Apple Account"
     case connecting = "Connecting to App Store"
-    case acquiringFreeLicense = "Acquiring free license"
-    case preparingTransfer = "Preparing download"
+    case acquiringFreeLicense = "Requesting free license"
+    case verifyingFreeLicense = "Verifying free license"
+    case retrying = "Retrying connection"
+    case preparingTransfer = "Preparing IPA download"
 }
 
 struct DownloadPreparationStatus {
     let appName: String
     let stage: DownloadRequestStage
+    var retryAttempt: Int = 0
+
+    var statusText: String {
+        retryAttempt > 0
+            ? "\(stage.rawValue) (\(retryAttempt)/\(StoreDownloadProtocol.maximumPreparationRetries))"
+            : stage.rawValue
+    }
+
+    var compactLabel: String {
+        switch stage {
+        case .waitingForAccount: "Queued"
+        case .connecting: "Connecting"
+        case .acquiringFreeLicense: "License"
+        case .verifyingFreeLicense: "Verifying"
+        case .retrying: "Retry \(retryAttempt)/\(StoreDownloadProtocol.maximumPreparationRetries)"
+        case .preparingTransfer: "Starting"
+        }
+    }
 }
 
 /// Apple account cookies and purchase/download tokens are mutable. In particular,
@@ -129,10 +150,11 @@ extension Downloads {
             try await existing.value
             return
         }
-        pendingPreparations[key] = .init(appName: package.software.name, stage: .connecting)
+        pendingPreparations[key] = .init(appName: package.software.name, stage: .waitingForAccount)
         let startedAt = CFAbsoluteTimeGetCurrent()
         let task = Task { @MainActor in
             await AccountDownloadGate.shared.acquire(accountID)
+            pendingPreparations[key] = .init(appName: package.software.name, stage: .connecting)
             // Defer is synchronous; scheduling this release still preserves
             // FIFO ownership inside AccountDownloadGate.
             defer { Task { await AccountDownloadGate.shared.release(accountID) } }
@@ -140,7 +162,7 @@ extension Downloads {
             try await AppStore.this.withAccount(id: accountID) { account in
                 let downloadOutput: DownloadOutput
                 do {
-                    downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
+                    downloadOutput = try await self.prepareTicketWithRetries(account: &account.account, package: package, key: key)
                 } catch ApplePackageError.licenseRequired {
                     // The Get action authorizes acquiring a FREE license, never
                     // charging the account or accepting Apple terms silently.
@@ -168,10 +190,11 @@ extension Downloads {
                             throw error
                         }
                     }
+                    pendingPreparations[key] = .init(appName: package.software.name, stage: .verifyingFreeLicense)
                     // One safe entitlement check after acquisition or transport
                     // interruption, never an unbounded license request loop.
                     do {
-                        downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
+                        downloadOutput = try await self.prepareTicketWithRetries(account: &account.account, package: package, key: key)
                     } catch ApplePackageError.licenseRequired where licenseTransportInterrupted {
                         throw NSError(domain: "Velo.LicenseTransport", code: 1, userInfo: [
                             NSLocalizedDescriptionKey: "Apple's free-license connection was interrupted. Please retry the request or switch between Wi-Fi and mobile data."
@@ -201,6 +224,32 @@ extension Downloads {
             logger.info("Store request finished after \(Int(CFAbsoluteTimeGetCurrent() - startedAt))s")
         }
         try await task.value
+    }
+
+    /// Automatically repeat a safe download-ticket read after transient
+    /// networking failures. Never replay Apple license acquisition.
+    private func prepareTicketWithRetries(
+        account: inout Account, package: AppStore.AppPackage, key: DownloadRequestIdentity
+    ) async throws -> DownloadOutput {
+        var retries = 0
+        while true {
+            try Task.checkCancellation()
+            do {
+                return try await StoreDownloadService.download(account: &account, package: package)
+            } catch {
+                try Task.checkCancellation()
+                guard StoreDownloadProtocol.shouldRetryPreparation(error, completedRetries: retries) else {
+                    throw error
+                }
+                retries += 1
+                pendingPreparations[key] = .init(appName: package.software.name,
+                                                 stage: .retrying, retryAttempt: retries)
+                logger.info("Transient Apple ticket failure; safe read retry \(retries)/\(StoreDownloadProtocol.maximumPreparationRetries)")
+                try await Task.sleep(nanoseconds:
+                    StoreDownloadProtocol.preparationRetryDelayNanoseconds(retries - 1))
+                pendingPreparations[key] = .init(appName: package.software.name, stage: .connecting)
+            }
+        }
     }
 }
 

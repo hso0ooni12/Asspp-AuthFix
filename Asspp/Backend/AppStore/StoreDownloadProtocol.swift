@@ -65,6 +65,24 @@ enum StoreDownloadProtocol {
         return false
     }
 
+    /// Retry only safe metadata/ticket reads. Never replay a purchase,
+    /// verification challenge, or authorization denial (HTTP 403).
+    static let maximumPreparationRetries = 2
+
+    static func shouldRetryPreparation(_ error: Error, completedRetries: Int) -> Bool {
+        guard completedRetries < maximumPreparationRetries else { return false }
+        if isTransientRequestFailure(error) { return true }
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain || nsError.domain.contains("NWPOSIXError") {
+            return [53, 54, 60, 61, 64, 65].contains(nsError.code)
+        }
+        return false
+    }
+
+    static func preparationRetryDelayNanoseconds(_ completedRetries: Int) -> UInt64 {
+        UInt64(1 << min(max(completedRetries, 0), 1)) * 1_000_000_000
+    }
+
     static func historyIdentifiers(from item: [String: Any]) throws -> [String] {
         let metadata = item["metadata"] as? [String: Any] ?? [:]
         let raw = metadata["softwareVersionExternalIdentifiers"] as? [Any]
