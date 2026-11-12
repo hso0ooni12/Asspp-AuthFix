@@ -178,8 +178,16 @@ enum StoreDownloadService {
                         // An HTTP 200 may still contain a mismatched app or
                         // incomplete songList. Trigger the one-time independent
                         // endpoint fallback instead of surfacing a dead-end.
-                        _ = try StoreDownloadProtocol.packageItem(
+                        let item = try StoreDownloadProtocol.packageItem(
                             ticket, bundleID: app.bundleID, version: requestedVersion)
+                        // A ticket without a signed IPA URL or valid SINF list
+                        // should trigger the independent endpoint fallback.
+                        guard let address = item["URL"] as? String,
+                              let asset = URL(string: address), asset.host != nil,
+                              ["https", "http"].contains(asset.scheme),
+                              let signatures = item["sinfs"] as? [[String: Any]],
+                              !signatures.isEmpty
+                        else { throw StoreDownloadError.invalidPackage }
                     }
                     return ticket
                 } resolveVersion: {
