@@ -16,6 +16,22 @@ struct ProductHistoryView: View {
 
     var body: some View {
         List {
+            if vm.versionIdentifiers.isEmpty && !vm.loading {
+                ContentUnavailableView {
+                    Label("Version history unavailable", systemImage: "clock.arrow.circlepath")
+                } description: {
+                    Text("Apple may restrict historical downloads for this app, account or region.")
+                } actions: {
+                    Button("Retry History") {
+                        vm.clearVersionItems()
+                        vm.populateVersionIdentifiers {
+                            await MainActor.run { vm.populateNextVersionItems() }
+                        }
+                    }
+                    .buttonStyle(VeloPillButtonStyle(prominent: true))
+                }
+                .listRowBackground(Color.clear)
+            }
             Section("Previous Versions") {
                 ForEach(vm.versionIdentifiers, id: \.self) { key in
                 HStack(spacing: 12) {
