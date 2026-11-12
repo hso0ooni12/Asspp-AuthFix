@@ -41,6 +41,29 @@ struct DownloadProtocolChecks {
             }
         } resolveVersion: { fatalError("Unexpected catalog lookup") } onFallback: { _ in }
         precondition(requests.map(\.0) == [.volumeStore, .redownload, .update])
+        // A first-endpoint 403 can be followed by exactly one independent
+        // authenticated read on Apple's approved alternate endpoint. The
+        // rejected route is not retried and the version never changes.
+        requests = []
+        _ = try await StoreDownloadProtocol.fetchWithFallback(version: "12345") { endpoint, version in
+            requests.append((endpoint, version))
+            if endpoint == .volumeStore { throw StoreDownloadError.response(403) }
+            return success
+        } resolveVersion: { fatalError("Historical ID changed after 403") } onFallback: {
+            precondition($0 == "volumeStore-access-denied")
+        }
+        precondition(requests.map(\.0) == [.volumeStore, .redownload])
+        precondition(requests.allSatisfy { $0.1 == "12345" })
+        requests = []
+        do {
+            _ = try await StoreDownloadProtocol.fetchWithFallback(version: "12345") { endpoint, version in
+                requests.append((endpoint, version))
+                throw StoreDownloadError.response(403)
+            } resolveVersion: { fatalError("Unexpected catalog lookup") } onFallback: { _ in }
+            fatalError("Accepted a persistent 403")
+        } catch StoreDownloadError.response(403) {
+            precondition(requests.map(\.0) == [.volumeStore, .redownload])
+        }
         precondition(!StoreDownloadProtocol.isTransientHTTPStatus(403))
         precondition(!StoreDownloadProtocol.isTransientNetworkError(
             NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)))
