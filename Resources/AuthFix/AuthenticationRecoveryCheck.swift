@@ -9,6 +9,13 @@ struct AuthenticationRecoveryCheck {
     }
 
     static func main() throws {
+        try require(AuthenticationRecovery.maximumSends == 6, "bounded sign-in delivery")
+        try require(AuthenticationRecovery.isMissingEndpoint(404), "missing route 404")
+        try require(AuthenticationRecovery.isMissingEndpoint(204), "missing route 204")
+        try require(!AuthenticationRecovery.isMissingEndpoint(403), "403 is not missing endpoint")
+        let sample = AuthenticationDeliveryError(statuses: [404, 204, 404])
+        try require(sample.errorDescription?.contains("sign-in endpoints are unavailable") == true,
+                    "actionable Apple sign-in service failure")
         let empty = Data()
         let html = Data("<html><title>404 Not Found</title></html>".utf8)
         let businessReply = try PropertyListSerialization.data(
