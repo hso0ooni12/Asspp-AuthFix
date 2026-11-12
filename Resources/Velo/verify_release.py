@@ -76,7 +76,7 @@ def validate_sources():
     assert "DownloadRouteAdvisor.shared.fallbackSucceededAfterPreferredFailure" in service
     assert "isPreferredTransportFailure" in service
     protocol = (ROOT / "Asspp/Backend/AppStore/StoreDownloadProtocol.swift").read_text()
-    assert 'onFallback("volumeStore-transient")' in protocol
+    assert '"volumeStore-transient"' in protocol and '"volumeStore-access-denied"' in protocol
     assert "DownloadTransferRetryPolicy" in protocol and "historyIdentifiers" in protocol
     assert "dataWithRetry(session: session, request: request" in service
     archive = (ROOT / "Asspp/Backend/AppStore/AppPackageArchive.swift").read_text()
