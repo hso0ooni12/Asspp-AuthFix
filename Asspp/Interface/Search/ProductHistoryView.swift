@@ -12,6 +12,7 @@ struct ProductHistoryView: View {
     @State var vm: AppPackageArchive
     @State private var showErrorAlert = false
     @State private var downloadingVersions: Set<String> = []
+    @State private var downloads = Downloads.this
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
@@ -66,7 +67,16 @@ struct ProductHistoryView: View {
                                 }
                             }
                         } label: {
-                            if downloadingVersions.contains(key) {
+                            if let stage = downloads.pendingPreparations.first(where: {
+                                $0.key.bundleID == vm.package.software.bundleID && $0.key.version == key
+                            })?.value {
+                                VStack(spacing: 3) {
+                                    ProgressView().controlSize(.mini)
+                                    Text(stage.compactLabel)
+                                        .font(.system(size: 9, weight: .medium))
+                                }
+                                .accessibilityLabel(stage.statusText)
+                            } else if downloadingVersions.contains(key) {
                                 ProgressView().tint(.primary)
                             } else {
                                 Text("GET")

@@ -115,7 +115,7 @@ struct DownloadView: View {
                             ProgressView().tint(AssppTheme.accent)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(item.appName).font(.subheadline.weight(.medium))
-                                Text(item.stage.rawValue)
+                                Text(item.statusText)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }

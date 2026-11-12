@@ -37,6 +37,13 @@ struct ProductView: View {
 
     private var software: ApplePackage.Software { archive.package.software }
 
+    private var activePreparation: DownloadPreparationStatus? {
+        dvm.pendingPreparations.first(where: {
+            $0.key.bundleID == software.bundleID &&
+            $0.key.version == archive.package.externalVersionID
+        })?.value
+    }
+
     private var fileSize: String {
         guard let bytes = software.fileSizeBytes.flatMap(Int64.init) else { return "—" }
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
@@ -119,6 +126,12 @@ struct ProductView: View {
                     }
                 }
                 .padding(.top, 2)
+                if let activePreparation {
+                    Text(activePreparation.statusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -132,6 +145,15 @@ struct ProductView: View {
                     .frame(minWidth: 52)
             }
             .buttonStyle(VeloPillButtonStyle(prominent: true))
+        } else if let activePreparation {
+            VStack(spacing: 4) {
+                ProgressView().controlSize(.mini)
+                Text(activePreparation.compactLabel)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .frame(minWidth: 90, minHeight: 45)
+            .accessibilityLabel(activePreparation.statusText)
         } else {
             Button {
                 guard let account, !requestingDownload else { return }
