@@ -95,6 +95,16 @@ class AppPackageArchive {
         return pkg
     }
 
+    /// A refresh must never erase valid versions just because Apple's current
+    /// endpoint replies with 403. Keep the last successful authenticated list
+    /// until another confirmed list replaces or extends it.
+    func refreshVersionHistory(_ completion: (() async -> Void)? = nil) {
+        guard !loading else { return }
+        error = nil
+        unavailableVersionIDs.removeAll()
+        populateVersionIdentifiers(completion)
+    }
+
     func clearVersionItems() {
         assert(!loading)
         error = nil
@@ -141,7 +151,12 @@ class AppPackageArchive {
                             account: &userAccount.account, package: requestedPackage)
                     }
                 }
-                self.versionIdentifiers = Array(versions.reversed())
+                var seen = Set<String>()
+                // Merge only real IDs returned by Apple or previously verified
+                // and persisted for this app, platform and store. Never add
+                // placeholders; the old list remains usable on HTTP 403.
+                self.versionIdentifiers = (Array(versions.reversed()) + self.versionIdentifiers)
+                    .filter { seen.insert($0).inserted }
                 self.unavailableVersionIDs.formIntersection(self.versionIdentifiers)
             } catch {
                 if case .licenseRequired = error as? ApplePackageError {

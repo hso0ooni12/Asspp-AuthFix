@@ -16,15 +16,23 @@ struct ProductHistoryView: View {
 
     var body: some View {
         List {
+            if let message = vm.error, !vm.versionIdentifiers.isEmpty {
+                Label("Showing saved versions. Live refresh was unavailable.", systemImage: "wifi.exclamationmark")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHint(message)
+                    .listRowBackground(Color.clear)
+            }
             if vm.versionIdentifiers.isEmpty && !vm.loading {
                 ContentUnavailableView {
                     Label("Version history unavailable", systemImage: "clock.arrow.circlepath")
                 } description: {
-                    Text("Apple may restrict historical downloads for this app, account or region.")
+                    Text(vm.error == nil
+                        ? "The previous versions have not loaded yet."
+                        : "Apple isn't returning an authorized history for this account. Existing saved versions are preserved.")
                 } actions: {
                     Button("Retry History") {
-                        vm.clearVersionItems()
-                        vm.populateVersionIdentifiers {
+                        vm.refreshVersionHistory {
                             await MainActor.run { vm.populateNextVersionItems() }
                         }
                     }
@@ -101,8 +109,7 @@ struct ProductHistoryView: View {
                     .disabled(vm.isVersionItemsFullyLoaded)
                     Divider()
                     Button(role: .destructive) {
-                        vm.clearVersionItems()
-                        vm.populateVersionIdentifiers {
+                        vm.refreshVersionHistory {
                             await MainActor.run { vm.populateNextVersionItems() }
                         }
                     } label: {
@@ -135,7 +142,10 @@ struct ProductHistoryView: View {
             Text(vm.error ?? String(localized: "Unknown Error"))
         }
         .onChange(of: vm.error) { _, newValue in
-            showErrorAlert = newValue != nil
+            // Access-denied is persistent, not a useful modal. Show a stable
+            // inline explanation and preserve any cached IDs instead.
+            showErrorAlert = newValue != nil &&
+                !(newValue?.contains("HTTP 403") ?? false)
         }
         .onAppear {
             if vm.versionIdentifiers.isEmpty {

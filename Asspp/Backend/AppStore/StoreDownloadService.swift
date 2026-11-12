@@ -28,8 +28,25 @@ enum StoreDownloadService {
                 try StoreDownloadProtocol.historyIdentifiers(from: item)
             }
         } catch {
+            let initialFailure = error
             guard let failure = error as? StoreDownloadError else { throw error }
             switch failure {
+            case .response(403), .emptyResponse(403):
+                // Apple's legacy download endpoint can deny version-history
+                // requests that still work through the account-bound modern
+                // ent/download route. Try exactly once; never forge IDs or
+                // retry the rejected endpoint indefinitely.
+                do {
+                    return try await product(account: &account, package: package,
+                                             version: package.externalVersionID,
+                                             operation: "versions-modern") { item in
+                        try StoreDownloadProtocol.historyIdentifiers(from: item)
+                    }
+                } catch {
+                    try Task.checkCancellation()
+                    logger.info("Modern history route unavailable: \(StoreDiagnostics.errorSummary(error))")
+                    throw initialFailure
+                }
             case .noVersions, .empty: break
             default: throw error
             }
@@ -97,7 +114,10 @@ enum StoreDownloadService {
             // or persist a DSID, cookie, password token, or signed IPA URL.
             let routeScope = "\(account.directoryServicesIdentifier)|\(account.store)|\(platform.rawValue)"
             let tryPreferred: Bool
-            if operation == "download" {
+            let modernHistoryOnly = operation == "versions-modern"
+            if modernHistoryOnly {
+                tryPreferred = true
+            } else if operation == "download" {
                 tryPreferred = await DownloadRouteAdvisor.shared.shouldTryPreferred(scope: routeScope)
             } else {
                 tryPreferred = false
@@ -129,6 +149,7 @@ enum StoreDownloadService {
                     effectiveVersion = preferredVersion
                 } catch {
                     try Task.checkCancellation()
+                    if modernHistoryOnly { throw error }
                     preferredFailureWorthRemembering = reachedPreferredTransport && isPreferredTransportFailure(error)
                     logger.info("Store download [\(trace)]: preferred transport unavailable, trying legacy transport; \(StoreDiagnostics.errorSummary(error))")
                 }
@@ -139,6 +160,7 @@ enum StoreDownloadService {
             if let preferredResponse {
                 response = preferredResponse
             } else {
+                guard !modernHistoryOnly else { throw StoreDownloadError.empty }
                 response = try await StoreDownloadProtocol.fetchWithFallback(version: version) { endpoint, requestedVersion in
                     effectiveVersion = requestedVersion
                     return try await fetch(session: session, endpoint: endpoint, account: &account,

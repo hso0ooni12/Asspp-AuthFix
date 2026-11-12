@@ -64,6 +64,16 @@ struct DownloadProtocolChecks {
         } catch StoreDownloadError.response(403) {
             precondition(requests.map(\.0) == [.volumeStore, .redownload])
         }
+        precondition(StoreDownloadProtocol.shouldRetryPreparation(
+            StoreDownloadError.response(503), completedRetries: 0))
+        precondition(StoreDownloadProtocol.shouldRetryPreparation(
+            NSError(domain: NSPOSIXErrorDomain, code: 54), completedRetries: 1))
+        precondition(!StoreDownloadProtocol.shouldRetryPreparation(
+            StoreDownloadError.response(403), completedRetries: 0))
+        precondition(!StoreDownloadProtocol.shouldRetryPreparation(
+            StoreDownloadError.response(503), completedRetries: 2))
+        precondition(StoreDownloadProtocol.preparationRetryDelayNanoseconds(0) == 1_000_000_000)
+        precondition(StoreDownloadProtocol.preparationRetryDelayNanoseconds(1) == 2_000_000_000)
         precondition(!StoreDownloadProtocol.isTransientHTTPStatus(403))
         precondition(!StoreDownloadProtocol.isTransientNetworkError(
             NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)))
