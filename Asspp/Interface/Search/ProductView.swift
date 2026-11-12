@@ -1,8 +1,6 @@
 //
 //  ProductView.swift
-//  Asspp
-//
-//  Created by 秋星桥 on 2024/7/11.
+//  Velo — App Store-inspired product details
 //
 
 import ApplePackage
@@ -14,10 +12,6 @@ struct ProductView: View {
     @State private var archive: AppPackageArchive
     @Binding var navigationPath: NavigationPath
 
-    var region: String {
-        archive.region
-    }
-
     init(archive: AppStore.AppPackage, region: String, navigationPath: Binding<NavigationPath>) {
         _archive = State(initialValue: AppPackageArchive(accountID: nil, region: region, package: archive))
         _navigationPath = navigationPath
@@ -25,6 +19,13 @@ struct ProductView: View {
 
     @State private var vm = AppStore.this
     @State private var dvm = Downloads.this
+    @State private var selection: AppStore.UserAccount.ID = .init()
+    @State private var hint: Hint?
+    @State private var requestingDownload = false
+    @State private var showError = false
+    @State private var showFullDescription = false
+
+    var region: String { archive.region }
 
     var eligibleAccounts: [AppStore.UserAccount] {
         vm.eligibleAccounts(for: region)
@@ -34,47 +35,42 @@ struct ProductView: View {
         vm.accounts.first { $0.id == selection }
     }
 
-    @State private var selection: AppStore.UserAccount.ID = .init()
-    @State private var hint: Hint?
-    @State private var requestingDownload = false
+    private var software: ApplePackage.Software { archive.package.software }
 
-    let sizeFormatter: ByteCountFormatter = {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        formatter.allowedUnits = [.useKB, .useMB, .useGB]
-        return formatter
-    }()
-
-    var formattedSize: String? {
-        guard let sizeBytes = archive.package.software.fileSizeBytes.flatMap(Int64.init(_:)) else {
-            return nil
-        }
-        return sizeFormatter.string(fromByteCount: sizeBytes)
+    private var fileSize: String {
+        guard let bytes = software.fileSizeBytes.flatMap(Int64.init) else { return "—" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     var body: some View {
-        Form {
-            packageHeader
-            buttons
-            accountSelector
-            packageDetails
-            packageDescription
-            if account == nil {
-                Section {
-                    Text("No account available for this region.")
-                        .foregroundStyle(.red)
-                } header: {
-                    Text("Error")
-                } footer: {
-                    Text("Please add an account in the Accounts page.")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 26) {
+                hero
+                stats
+                screenshots
+                about
+                if let notes = software.releaseNotes, !notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 11) {
+                        sectionTitle("What's New")
+                        Text(notes)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                versionHistory
+                details
+                accountSelector
             }
-            pricing
+            .padding(.horizontal, 20)
+            .padding(.top, 15)
+            .padding(.bottom, 28)
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
         .background(AssppTheme.background)
-        .tint(AssppTheme.accent)
+        .navigationTitle(software.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(for: PackageManifest.self) { manifest in
+            PackageView(pkg: manifest)
+        }
         .onAppear {
             selection = eligibleAccounts.first?.id ?? .init()
             vm.prepareDownloads(region: region, accountID: selection)
@@ -82,148 +78,282 @@ struct ProductView: View {
         .onChange(of: selection) { _, value in
             vm.prepareDownloads(region: region, accountID: value)
         }
-        .navigationDestination(for: PackageManifest.self) { manifest in
-            PackageView(pkg: manifest)
+        .alert("Download", isPresented: $showError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(hint?.message ?? "Unable to start download.")
         }
-        .navigationTitle("App Details")
     }
 
-    var packageHeader: some View {
-        Section {
-            PackageDisplayView(archive: archive.package)
-            NavigationLink {
-                // Build the archive lazily: constructing it eagerly here runs
-                // two synchronous file reads + a JSON decode on every body
-                // evaluation, even before the user navigates.
-                LazyView(ProductHistoryView(vm: AppPackageArchive(accountID: selection, region: region, package: archive.package)))
-            } label: {
-                let badgeText = archive.releaseDate.flatMap { date in
-                    Text(date.formatted(.relative(presentation: .numeric)))
+    private var hero: some View {
+        HStack(alignment: .top, spacing: 16) {
+            KFImage(URL(string: software.artworkUrl))
+                .setProcessor(DownsamplingImageProcessor(size: CGSize(width: 112, height: 112)))
+                .resizable()
+                .scaledToFill()
+                .frame(width: 112, height: 112)
+                .clipShape(RoundedRectangle(cornerRadius: 24))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24)
+                        .strokeBorder(AssppTheme.separator.opacity(0.3), lineWidth: 0.5)
                 }
-
-                Text("Version \(archive.package.software.version)")
-                    .badge(badgeText)
-            }
-        } header: {
-            Text("Package")
-        }
-    }
-
-    var packageDetails: some View {
-        Section {
-            CopyableRow(label: "Bundle ID", value: archive.package.software.bundleID, monospaced: true)
-            Text("Developer")
-                .badge(archive.package.software.sellerName)
-            if !archive.package.software.primaryGenreName.isEmpty {
-                Text("Category")
-                    .badge(archive.package.software.primaryGenreName)
-            }
-            if let formattedSize {
-                Text("Size")
-                    .badge(formattedSize)
-            }
-            Text("Compatibility")
-                .badge("\(archive.package.software.minimumOsVersion)+")
-            if archive.package.software.userRatingCount > 0 {
-                Text("Rating")
-                    .badge("\(String(format: "%.1f", archive.package.software.averageUserRating)) (\(archive.package.software.userRatingCount))")
-            }
-        } header: {
-            Text("Details")
-        }
-    }
-
-    var packageDescription: some View {
-        Section {
-            Text(archive.package.software.releaseNotes ?? "")
-        } header: {
-            Text("What's New")
-        }
-    }
-
-    var pricing: some View {
-        Section {
-            Text(archive.formattedPrice ?? "N/A")
-        } header: {
-            Text("Price")
-        } footer: {
-            Text(archive.package.software.price == 0
-                ? "Free license is acquired automatically if needed when you tap Download."
-                : "Paid apps must already be owned by this Apple Account; no purchases are made here.")
-        }
-    }
-
-    var accountSelector: some View {
-        Section {
-            Picker("Account", selection: $selection) {
-                ForEach(eligibleAccounts) { account in
-                    Text(account.account.email)
-                        .id(account.id)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(software.name)
+                    .font(.title2.weight(.bold))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(software.sellerName)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                HStack(spacing: 8) {
+                    downloadButton
+                    if software.price == 0 {
+                        Text("Free")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if let formatted = software.formattedPrice {
+                        Text(formatted)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .padding(.top, 2)
             }
-            .pickerStyle(.menu)
-            .redacted(reason: .placeholder, isEnabled: vm.demoMode)
-        } header: {
-            Text("Account")
-        } footer: {
-            Text("You have searched this package with region \(region)")
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    var buttons: some View {
-        Section {
-            if let req = dvm.downloadRequest(forArchive: archive.package) {
-                NavigationLink(value: req) {
-                    Text("Show Download")
-                }
-            } else {
-                AsyncButton {
-                    guard let account else { return }
-                    requestingDownload = true
+    @ViewBuilder
+    private var downloadButton: some View {
+        if let request = dvm.downloadRequest(forArchive: archive.package) {
+            NavigationLink(value: request) {
+                Text(request.completed ? "OPEN" : "VIEW")
+                    .frame(minWidth: 52)
+            }
+            .buttonStyle(VeloPillButtonStyle(prominent: true))
+        } else {
+            Button {
+                guard let account, !requestingDownload else { return }
+                requestingDownload = true
+                Task {
                     defer { requestingDownload = false }
                     do {
                         try await dvm.startDownload(for: archive.package, accountID: account.id)
                         hint = Hint(message: String(localized: "Download Requested"), color: nil)
-                        if let req = dvm.downloadRequest(forArchive: archive.package) {
-                            navigationPath.append(req)
+                        if let request = dvm.downloadRequest(forArchive: archive.package) {
+                            navigationPath.append(request)
                         }
                     } catch {
                         hint = Hint(message: error.localizedDescription, color: .red)
-                        throw error
-                    }
-                } label: {
-                    if requestingDownload {
-                        ProgressView().tint(AssppTheme.accent)
-                    } else {
-                        Text("GET")
+                        showError = true
                     }
                 }
-                .buttonStyle(VeloPillButtonStyle())
-                .disabledWhenLoading()
-                .disabled(account == nil)
+            } label: {
+                if requestingDownload {
+                    ProgressView().tint(.white).frame(minWidth: 52)
+                } else {
+                    Text("GET").frame(minWidth: 52)
+                }
             }
-        } header: {
-            Text("Download")
-        } footer: {
-            if let hint {
-                Text(hint.message)
-                    .foregroundStyle(hint.color ?? .primary)
-            } else {
-                Text(requestingDownload ? "Preparing a secure download request. The first request can take longer." : "Package can be installed later in download page.")
+            .buttonStyle(VeloPillButtonStyle(prominent: true))
+            .disabled(account == nil || requestingDownload)
+            .accessibilityLabel("Download IPA")
+        }
+    }
+
+    private var stats: some View {
+        HStack(alignment: .top, spacing: 0) {
+            statItem(label: "RATINGS",
+                     value: software.userRatingCount > 0
+                        ? String(format: "%.1f", software.averageUserRating) : "—",
+                     detail: software.userRatingCount > 0
+                        ? "\(software.userRatingCount.formatted()) reviews" : "No ratings")
+            statDivider
+            statItem(label: "CATEGORY",
+                     value: software.primaryGenreName.isEmpty ? "—" : software.primaryGenreName,
+                     detail: "App Store")
+            statDivider
+            statItem(label: "SIZE", value: fileSize, detail: "Download")
+            statDivider
+            statItem(label: "REQUIRES",
+                     value: "iOS \(software.minimumOsVersion)+",
+                     detail: "Compatibility")
+        }
+        .padding(.vertical, 15)
+        .overlay(alignment: .top) { Divider() }
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private var statDivider: some View {
+        Rectangle()
+            .fill(AssppTheme.separator.opacity(0.4))
+            .frame(width: 0.5, height: 58)
+            .padding(.horizontal, 3)
+    }
+
+    private func statItem(label: String, value: String, detail: String) -> some View {
+        VStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.5)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+            Text(detail)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var screenshots: some View {
+        if !software.screenshotUrls.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                sectionTitle("Preview")
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(software.screenshotUrls.prefix(8), id: \.self) { address in
+                            KFImage(URL(string: address))
+                                .setProcessor(DownsamplingImageProcessor(
+                                    size: CGSize(width: 260, height: 460)))
+                                .placeholder {
+                                    RoundedRectangle(cornerRadius: 18)
+                                        .fill(AssppTheme.elevated)
+                                }
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 210, height: 365)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 18))
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .contentMargins(.trailing, 2)
+                .scrollIndicators(.hidden)
             }
         }
+    }
+
+    private var about: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionTitle("About This App")
+            Text(software.description)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(showFullDescription ? nil : 4)
+            if !showFullDescription && software.description.count > 170 {
+                Button("More") { showFullDescription = true }
+                    .font(.subheadline.weight(.semibold))
+            }
+        }
+    }
+
+    private var versionHistory: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            sectionTitle("Version History")
+            NavigationLink {
+                LazyView(ProductHistoryView(vm: AppPackageArchive(
+                    accountID: selection, region: region, package: archive.package)))
+            } label: {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Version \(software.version)")
+                            .font(.subheadline.weight(.semibold))
+                        Text("View and download previous versions")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(14)
+                .background(AssppTheme.elevated, in: RoundedRectangle(cornerRadius: 15))
+            }
+            .buttonStyle(.plain)
+            .disabled(account == nil)
+        }
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            sectionTitle("Information")
+            VStack(spacing: 0) {
+                detailRow("Developer", software.sellerName)
+                Divider()
+                detailRow("Category", software.primaryGenreName)
+                Divider()
+                detailRow("Version", software.version)
+                Divider()
+                detailRow("Bundle ID", software.bundleID)
+                Divider()
+                detailRow("Price", software.formattedPrice ?? "N/A")
+            }
+            .padding(.horizontal, 14)
+            .background(AssppTheme.elevated, in: RoundedRectangle(cornerRadius: 15))
+        }
+    }
+
+    private func detailRow(_ name: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(name)
+                .foregroundStyle(.primary)
+                .frame(width: 87, alignment: .leading)
+            Spacer(minLength: 0)
+            Text(value)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(3)
+                .minimumScaleFactor(0.8)
+                .textSelection(.enabled)
+        }
+        .font(.subheadline)
+        .padding(.vertical, 13)
+    }
+
+    private var accountSelector: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Apple Account")
+            if eligibleAccounts.isEmpty {
+                Text("Add an Apple Account for \(region) in Accounts to download this app.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("Download with", selection: $selection) {
+                    ForEach(eligibleAccounts) { account in
+                        Text(account.account.email)
+                            .tag(account.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .redacted(reason: .placeholder, isEnabled: vm.demoMode)
+            }
+            Text("Free licenses are requested automatically. Paid purchases are never initiated.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func sectionTitle(_ label: String) -> some View {
+        Text(label).font(.title3.bold())
     }
 }
 
 extension AppStore.AppPackage {
     var displaySupportedDevicesIcon: String {
-        // TODO: assuming iPhone for now
         "iphone"
     }
 }
 
-/// Defers building its content until the view is actually rendered, so an
-/// expensive destination is not constructed eagerly inside a NavigationLink.
+/// Constructs expensive historical metadata only after navigation.
 struct LazyView<Content: View>: View {
     private let build: () -> Content
 
@@ -231,7 +361,5 @@ struct LazyView<Content: View>: View {
         self.build = build
     }
 
-    var body: Content {
-        build()
-    }
+    var body: Content { build() }
 }
