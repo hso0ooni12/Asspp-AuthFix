@@ -474,15 +474,84 @@ extension SearchView {
 #if os(iOS)
     @available(iOS 26.0, *)
     extension SearchView {
+        /// Fixed search input: iOS 26's system searchable bar collapses
+        /// into the navigation area until the list is pulled down.
+        private var pinnedSearchField: some View {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search apps or Bundle ID", text: $searchKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .focused($searchKeyFocused)
+                    .onSubmit { search() }
+                if !searchKey.isEmpty {
+                    Button {
+                        searchTask?.cancel()
+                        searchKey = ""
+                        searchResult = []
+                        searchError = nil
+                        remainingRegions = []
+                        searching = false
+                        searchKeyFocused = true
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("Clear search")
+                }
+                Button { search() } label: {
+                    Image(systemName: "arrow.right")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(AssppTheme.accent, in: Circle())
+                        .foregroundStyle(.white)
+                }
+                .disabled(searchKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("Search App Store")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(AssppTheme.elevated, in: RoundedRectangle(cornerRadius: 16))
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
+        }
+
         var modernContent: some View {
-            List {
+            VStack(spacing: 0) {
+                pinnedSearchField
+                List {
                 if let searchError {
                     Label(searchError, systemImage: "exclamationmark.triangle")
                         .font(.footnote)
                 }
-                if searchResult.isEmpty && !searching {
-                    ContentUnavailableView.search(text: searchKey)
-                        .listRowBackground(Color.clear)
+                if searchResult.isEmpty && !searching &&
+                    !searchKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                        Text("No Results")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        Text("Try another name or store region.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if searchRegion != "ALL" {
+                            Button("Search All Stores") {
+                                searchRegion = "ALL"
+                                search()
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .padding(.top, 3)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
                 if !searchResult.isEmpty {
                     Section("\(searchResult.count) Results") {
@@ -516,10 +585,8 @@ extension SearchView {
                     .disabled(searching)
                 }
             }
-            .listStyle(.plain)
-            .searchable(text: $searchKey, prompt: "App or Bundle ID")
-            .searchFocused($searchKeyFocused)
-            .onSubmit(of: .search, search)
+                .listStyle(.plain)
+            }
             .background(AssppTheme.background)
             .navigationTitle("Search")
             .toolbar { tools }

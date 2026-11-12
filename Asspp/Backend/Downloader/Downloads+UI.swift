@@ -149,6 +149,7 @@ extension Downloads {
                     }
                     pendingPreparations[key] = .init(appName: package.software.name, stage: .acquiringFreeLicense)
                     logger.info("Free app lacks a license; acquiring and resuming requested download.")
+                    var licenseTransportInterrupted = false
                     do {
                         try await ApplePackage.Purchase.purchase(account: &account.account, app: package.software)
                     } catch {
@@ -157,13 +158,25 @@ extension Downloads {
                             // response proves that the stored token has expired.
                             try await ApplePackage.Authenticator.rotatePasswordToken(for: &account.account)
                             try await ApplePackage.Purchase.purchase(account: &account.account, app: package.software)
+                        } else if FreeLicensePolicy.isTransportInterruption(error) {
+                            // Do not repeat a non-idempotent license POST.
+                            // The server may have granted the license before
+                            // the connection failed. Verify with a safe read.
+                            licenseTransportInterrupted = true
+                            logger.info("Free license transport interrupted; verifying entitlement without another purchase")
                         } else if !FreeLicensePolicy.isAlreadyOwned(error.localizedDescription) {
                             throw error
                         }
                     }
-                    // Exactly one retry after a successful purchase or an
-                    // already-owned response; no unbounded request loops.
-                    downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
+                    // One safe entitlement check after acquisition or transport
+                    // interruption, never an unbounded license request loop.
+                    do {
+                        downloadOutput = try await StoreDownloadService.download(account: &account.account, package: package)
+                    } catch ApplePackageError.licenseRequired where licenseTransportInterrupted {
+                        throw NSError(domain: "Velo.LicenseTransport", code: 1, userInfo: [
+                            NSLocalizedDescriptionKey: "Apple's free-license connection was interrupted. Please retry the request or switch between Wi-Fi and mobile data."
+                        ])
+                    }
                 }
                 pendingPreparations[key] = .init(appName: package.software.name, stage: .preparingTransfer)
                 var resolvedPackage = package

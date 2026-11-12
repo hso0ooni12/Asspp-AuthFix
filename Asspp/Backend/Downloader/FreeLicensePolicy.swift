@@ -16,6 +16,18 @@ enum FreeLicensePolicy {
             || text.contains("failuretype: 2042")
     }
 
+    /// ApplePackage's SwiftNIO transport can fail before Apple's free-license
+    /// endpoint returns a response. A failed POST must not be blindly repeated.
+    static func isTransportInterruption(_ error: Error) -> Bool {
+        let failure = error as NSError
+        if failure.domain == NSURLErrorDomain {
+            return [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost,
+                    NSURLErrorCannotConnectToHost, NSURLErrorNotConnectedToInternet].contains(failure.code)
+        }
+        return failure.code == 1 &&
+            (failure.domain.contains("NWPOSIXError") || failure.domain == NSPOSIXErrorDomain)
+    }
+
     static func isAlreadyOwned(_ message: String) -> Bool {
         let text = message.lowercased()
         return text.contains("failuretype: 5002")

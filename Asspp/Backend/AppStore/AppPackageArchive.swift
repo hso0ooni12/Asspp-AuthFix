@@ -112,7 +112,34 @@ class AppPackageArchive {
         Task {
             do {
                 let versions = try await self.withLockedAccount(id: accountIdentifier) { userAccount in
-                    try await StoreDownloadService.versions(account: &userAccount.account, package: requestedPackage)
+                    do {
+                        return try await StoreDownloadService.versions(
+                            account: &userAccount.account, package: requestedPackage)
+                    } catch ApplePackageError.licenseRequired {
+                        // Opening history authorizes a FREE App Store license only.
+                        // Never purchase a paid app or automatically accept account terms.
+                        guard FreeLicensePolicy.shouldAcquire(price: requestedPackage.software.price) else {
+                            throw ApplePackageError.licenseRequired
+                        }
+                        logger.info("Version history: free license missing, acquiring before reloading versions")
+                        do {
+                            try await ApplePackage.Purchase.purchase(
+                                account: &userAccount.account, app: requestedPackage.software)
+                        } catch {
+                            if FreeLicensePolicy.isExpiredToken(error.localizedDescription) {
+                                try await ApplePackage.Authenticator.rotatePasswordToken(
+                                    for: &userAccount.account)
+                                try await ApplePackage.Purchase.purchase(
+                                    account: &userAccount.account, app: requestedPackage.software)
+                            } else if !FreeLicensePolicy.isAlreadyOwned(error.localizedDescription) {
+                                throw error
+                            }
+                        }
+                        // Request history once after license acquisition; do not
+                        // repeatedly issue purchase requests on network errors.
+                        return try await StoreDownloadService.versions(
+                            account: &userAccount.account, package: requestedPackage)
+                    }
                 }
                 self.versionIdentifiers = Array(versions.reversed())
                 self.unavailableVersionIDs.formIntersection(self.versionIdentifiers)
