@@ -15,8 +15,9 @@ struct ProductHistoryView: View {
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
-        Form {
-            ForEach(vm.versionIdentifiers, id: \.self) { key in
+        List {
+            Section("Previous Versions") {
+                ForEach(vm.versionIdentifiers, id: \.self) { key in
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(vm.versionItems[key]?.displayVersion ?? "Version ID \(key)")
@@ -47,13 +48,15 @@ struct ProductHistoryView: View {
                                 Text("GET")
                             }
                         }
-                        .buttonStyle(VeloPillButtonStyle())
+                        .buttonStyle(VeloPillButtonStyle(prominent: true))
                         .disabled(downloadingVersions.contains(key))
                     }
                 }
+                .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
+            }
             }
         }
-        .formStyle(.grouped)
+        .listStyle(.insetGrouped)
         .overlay {
             ZStack {
                 Rectangle()
