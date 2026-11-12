@@ -173,7 +173,8 @@ enum StoreDownloadService {
                                                  account: &account, appID: app.id,
                                                  version: requestedVersion, trace: trace)
                     if operation == "download",
-                       StoreDownloadProtocol.failureCode(ticket) != "9610" {
+                       StoreDownloadProtocol.failureCode(ticket) != "9610",
+                       StoreDownloadProtocol.fallbackReason(ticket) == nil {
                         // An HTTP 200 may still contain a mismatched app or
                         // incomplete songList. Trigger the one-time independent
                         // endpoint fallback instead of surfacing a dead-end.
