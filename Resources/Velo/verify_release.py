@@ -7,9 +7,9 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "5.6.0"
-BUILD = "2026111204"
-IPA_NAME = "Velo-5.6.0-Resilient-unsigned.ipa"
+VERSION = "5.7.0"
+BUILD = "2026111205"
+IPA_NAME = "Velo-5.7.0-Verified-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()
@@ -87,7 +87,12 @@ def validate_sources():
         code = (ROOT / ("Asspp/Interface/" + name + ".swift")).read_text()
         assert "ASS•PP" not in code, name
     assert not (ROOT / "Asspp/Backend/Decryption/DirectFairPlayed.swift").exists()
-    print("PASS Velo 5.6.0 bounded transient retries, historical versions, route cooldown and stable core")
+    assert "private enum RemoteIPAInfoPlist" in service
+    assert "readRange(session, url" in service
+    assert "versionMetadataFromAsset" in service
+    assert "ipaVerifiedVersionsV2" in archive
+    assert "Version ID" not in (ROOT / "Asspp/Interface/Search/ProductHistoryView.swift").read_text()
+    print("PASS Velo 5.7.0 bounded transient retries, historical versions, route cooldown and stable core")
 
 def validate_archive():
     spec = importlib.util.spec_from_file_location("r17_checks", ROOT / "Resources/R17/verify_release.py")
@@ -111,7 +116,7 @@ def validate_archive():
     path = ROOT / "artifacts/build-info.json"
     report = json.loads(path.read_text())
     report.update(
-        release="Velo 5.6.0 Resilient GET and History on stable R18/R20 core",
+        release="Velo 5.7.0 Verified IPA Metadata on stable R18/R20 core",
         displayName="Velo",
         preservesBundleIdentifier=True,
         quickDownloadFromSearch=True,
