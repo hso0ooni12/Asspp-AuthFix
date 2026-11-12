@@ -456,3 +456,202 @@ enum StoreDownloadService {
                                   bundleVersion: build, iTunesMetadata: PropertyListSerialization.data(fromPropertyList: metadata, format: .binary, options: 0))
     }
 }
+
+
+/// Signed IPA partial ZIP inspection. Only the central directory and main
+/// Info.plist are fetched, never an entire 500 MB application. No signed URLs
+/// or bytes are persisted to logs, disk caches, or analytics.
+private enum RemoteIPAInfoPlist {
+    struct Details {
+        let version: String
+        let build: String
+        let date: Date
+    }
+
+    private enum Failure: LocalizedError {
+        case unverified, unsupported, restricted
+
+        var errorDescription: String? {
+            switch self {
+            case .unverified: "The selected version could not be verified from the IPA."
+            case .unsupported: "The historical IPA uses an unsupported ZIP format."
+            case .restricted: "Apple did not allow a partial IPA metadata request."
+            }
+        }
+    }
+
+    static func read(url: URL, bundleID: String) async throws -> Details {
+        guard url.scheme == "https", url.host != nil else { throw Failure.restricted }
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 12
+        config.timeoutIntervalForResource = 25
+        config.httpCookieStorage = nil
+        config.urlCredentialStorage = nil
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+
+        let (_, total) = try await readRange(session, url, offset: 0, length: 1)
+        guard total >= 22 else { throw Failure.unverified }
+        let tailLength = Int(min(total, 65_557))
+        let (tail, _) = try await readRange(session, url,
+            offset: total - UInt64(tailLength), length: tailLength)
+
+        var end: Int?
+        for index in stride(from: tail.count - 22, through: 0, by: -1) {
+            if le32(tail, index) == 0x06054b50 &&
+                index + 22 + Int(le16(tail, index + 20)) == tail.count {
+                end = index
+                break
+            }
+        }
+        guard let end else { throw Failure.unverified }
+        let size = UInt64(le32(tail, end + 12))
+        let offset = UInt64(le32(tail, end + 16))
+        guard size > 0, size <= 16_777_216, offset < total,
+              size <= total - offset, size < UInt32.max, offset < UInt32.max
+        else { throw Failure.unsupported }
+
+        let (directory, _) = try await readRange(session, url, offset: offset, length: Int(size))
+        var cursor = 0
+        while cursor + 46 <= directory.count {
+            guard le32(directory, cursor) == 0x02014b50 else { throw Failure.unverified }
+            let method = le16(directory, cursor + 10)
+            let time = le16(directory, cursor + 12)
+            let date = le16(directory, cursor + 14)
+            let crc = le32(directory, cursor + 16)
+            let packed = le32(directory, cursor + 20)
+            let expanded = le32(directory, cursor + 24)
+            let nameLength = Int(le16(directory, cursor + 28))
+            let extraLength = Int(le16(directory, cursor + 30))
+            let commentLength = Int(le16(directory, cursor + 32))
+            let localOffset = UInt64(le32(directory, cursor + 42))
+            let next = cursor + 46 + nameLength + extraLength + commentLength
+            guard next <= directory.count else { throw Failure.unverified }
+            let name = directory.subdata(in: (cursor + 46)..<(cursor + 46 + nameLength))
+            let pieces = (String(data: name, encoding: .utf8) ?? "")
+                .split(separator: "/", omittingEmptySubsequences: false)
+
+            if pieces.count == 3, pieces[0] == "Payload",
+               pieces[1].hasSuffix(".app"), pieces[2] == "Info.plist" {
+                guard method == 0 || method == 8,
+                      packed > 0, packed <= 2_097_152,
+                      expanded > 0, expanded <= 2_097_152,
+                      localOffset <= total - 30 else { throw Failure.unsupported }
+                let (header, _) = try await readRange(session, url, offset: localOffset, length: 30)
+                guard le32(header, 0) == 0x04034b50, le16(header, 8) == method
+                else { throw Failure.unverified }
+                let bodyOffset = localOffset + 30 + UInt64(le16(header, 26))
+                    + UInt64(le16(header, 28))
+                guard bodyOffset < total, UInt64(packed) <= total - bodyOffset
+                else { throw Failure.unverified }
+                let (body, _) = try await readRange(session, url,
+                    offset: bodyOffset, length: Int(packed))
+                let info = try unpackSingleFile(name: name, method: method,
+                    time: time, date: date, crc: crc,
+                    body: body, expanded: expanded)
+                guard info["CFBundleIdentifier"] as? String == bundleID,
+                      let version = info["CFBundleShortVersionString"] as? String,
+                      !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      let build = info["CFBundleVersion"] as? String, !build.isEmpty
+                else { throw Failure.unverified }
+                let release = (info["releaseDate"] as? Date)
+                    ?? (info["ReleaseDate"] as? Date) ?? .distantPast
+                return Details(version: version, build: build, date: release)
+            }
+            cursor = next
+        }
+        throw Failure.unverified
+    }
+
+    private static func readRange(_ session: URLSession, _ url: URL,
+                                  offset: UInt64, length: Int) async throws -> (Data, UInt64) {
+        guard length > 0, length <= 16_777_216,
+              offset <= UInt64.max - UInt64(length) else { throw Failure.unsupported }
+        var request = URLRequest(url: url)
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        request.setValue("bytes=\(offset)-\(offset + UInt64(length) - 1)", forHTTPHeaderField: "Range")
+        // Return headers first: don't download a full application if a CDN
+        // ignores Range (HTTP 200 instead of HTTP 206).
+        let (stream, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 206,
+              let range = http.value(forHTTPHeaderField: "Content-Range"),
+              let end = range.split(separator: "/").last,
+              let total = UInt64(end), total > offset
+        else { throw Failure.restricted }
+        var data = Data()
+        data.reserveCapacity(length)
+        for try await byte in stream {
+            guard data.count < length else { throw Failure.restricted }
+            data.append(byte)
+        }
+        guard data.count == length else { throw Failure.restricted }
+        return (data, total)
+    }
+
+    private static func unpackSingleFile(
+        name: Data, method: UInt16, time: UInt16, date: UInt16,
+        crc: UInt32, body: Data, expanded: UInt32
+    ) throws -> [String: Any] {
+        guard name.count <= UInt16.max else { throw Failure.unsupported }
+        // Build an isolated one-entry ZIP so ZIPFoundation validates CRC and
+        // handles DEFLATE. The archive is tiny and removed immediately.
+        var data = Data()
+        data.add32(0x04034b50)
+        data.add16(20); data.add16(0); data.add16(method)
+        data.add16(time); data.add16(date); data.add32(crc)
+        data.add32(UInt32(body.count)); data.add32(expanded)
+        data.add16(UInt16(name.count)); data.add16(0)
+        data.append(name); data.append(body)
+        let directoryOffset = UInt32(data.count)
+        data.add32(0x02014b50)
+        data.add16(20); data.add16(20); data.add16(0); data.add16(method)
+        data.add16(time); data.add16(date); data.add32(crc)
+        data.add32(UInt32(body.count)); data.add32(expanded)
+        data.add16(UInt16(name.count)); data.add16(0); data.add16(0)
+        data.add16(0); data.add16(0); data.add32(0); data.add32(0)
+        data.append(name)
+        let directorySize = UInt32(data.count) - directoryOffset
+        data.add32(0x06054b50)
+        data.add16(0); data.add16(0); data.add16(1); data.add16(1)
+        data.add32(directorySize); data.add32(directoryOffset); data.add16(0)
+
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("zip")
+        defer { try? FileManager.default.removeItem(at: path) }
+        try data.write(to: path, options: .atomic)
+        let archive = try Archive(url: path, accessMode: .read)
+        guard let expectedName = String(data: name, encoding: .utf8),
+              let entry = archive.first(where: { $0.path == expectedName })
+        else { throw Failure.unverified }
+        var decoded = Data()
+        _ = try archive.extract(entry) { bytes in
+            guard decoded.count + bytes.count <= 2_097_152 else { throw Failure.unsupported }
+            decoded.append(bytes)
+        }
+        guard let plist = try PropertyListSerialization.propertyList(
+            from: decoded, options: [], format: nil) as? [String: Any]
+        else { throw Failure.unverified }
+        return plist
+    }
+
+    private static func le16(_ bytes: Data, _ at: Int) -> UInt16 {
+        UInt16(bytes[at]) | (UInt16(bytes[at + 1]) << 8)
+    }
+
+    private static func le32(_ bytes: Data, _ at: Int) -> UInt32 {
+        UInt32(bytes[at]) | (UInt32(bytes[at + 1]) << 8)
+            | (UInt32(bytes[at + 2]) << 16) | (UInt32(bytes[at + 3]) << 24)
+    }
+}
+
+private extension Data {
+    mutating func add16(_ number: UInt16) {
+        append(UInt8(truncatingIfNeeded: number))
+        append(UInt8(truncatingIfNeeded: number >> 8))
+    }
+
+    mutating func add32(_ number: UInt32) {
+        add16(UInt16(truncatingIfNeeded: number))
+        add16(UInt16(truncatingIfNeeded: number >> 16))
+    }
+}
