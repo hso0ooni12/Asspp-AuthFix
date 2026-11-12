@@ -1,8 +1,6 @@
 //
 //  PackageView.swift
-//  Asspp
-//
-//  Created by 秋星桥 on 2024/7/11.
+//  Velo — App Store-style download details
 //
 
 import ApplePackage
@@ -21,13 +19,8 @@ import Security
 struct PackageView: View {
     @State var pkg: PackageManifest
 
-    var archive: AppStore.AppPackage {
-        pkg.package
-    }
-
-    var url: URL {
-        pkg.targetLocation
-    }
+    var archive: AppStore.AppPackage { pkg.package }
+    var url: URL { pkg.targetLocation }
 
     @Environment(\.dismiss) var dismiss
     #if os(iOS)
@@ -43,52 +36,95 @@ struct PackageView: View {
     @State private var downloads = Downloads.this
 
     var body: some View {
-        Form {
-            Section {
-                AssppScreenHeader(
-                    eyebrow: "IPA  /  PACKAGE DETAILS",
-                    title: archive.software.name,
-                    subtitle: "Manage, decrypt and install your downloaded IPA.",
-                    symbol: "shippingbox.fill"
-                )
-            }
-            .listRowBackground(Color.clear)
-            Section {
-                ArchivePreviewView(archive: archive)
-            } header: {
-                Text("Package")
-            }
-
-            Section {
-                CopyableRow(label: "Bundle ID", value: archive.software.bundleID, monospaced: true)
-                Text("Version")
-                    .badge(archive.software.version)
-                Text("Developer")
-                    .badge(archive.software.sellerName)
-                if !archive.software.primaryGenreName.isEmpty {
-                    Text("Category")
-                        .badge(archive.software.primaryGenreName)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 25) {
+                hero
+                if pkg.completed {
+                    completedActions
+                } else {
+                    transferActions
                 }
-                Text("Compatibility")
-                    .badge("\(archive.software.minimumOsVersion)+")
-                if archive.software.userRatingCount > 0 {
-                    Text("Rating")
-                        .badge("\(String(format: "%.1f", archive.software.averageUserRating)) (\(archive.software.userRatingCount))")
-                }
-            } header: {
-                Text("Details")
+                packageInformation
+                accountInformation
+                advancedTools
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 15)
+            .padding(.bottom, 30)
+        }
+        .background(AssppTheme.background)
+        .tint(AssppTheme.accent)
+        .navigationTitle("Download Details")
+    }
 
-            if pkg.completed {
-                #if os(macOS)
-                    DeviceCTLInstallSection(package: pkg)
-                #endif
-                #if os(iOS)
-                    Section {
+    private var hero: some View {
+        HStack(alignment: .center, spacing: 16) {
+            KFImage(URL(string: archive.software.artworkUrl))
+                .setProcessor(DownsamplingImageProcessor(size: CGSize(width: 100, height: 100)))
+                .resizable()
+                .scaledToFill()
+                .frame(width: 100, height: 100)
+                .clipShape(RoundedRectangle(cornerRadius: 23))
+            VStack(alignment: .leading, spacing: 6) {
+                Text(archive.software.name)
+                    .font(.title2.bold())
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(archive.software.sellerName)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Text("Version \(archive.software.version)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var completedActions: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionTitle("Ready to Decrypt")
+            #if os(iOS)
+                Button {
+                    decryptor.prepare(pkg)
+                } label: {
+                    Label(decryptor.status(for: pkg) == .preparing
+                          ? "Preparing FairPlayed..." : "Decrypt IPA",
+                          systemImage: "lock.open.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(VeloPillButtonStyle(prominent: true))
+                .disabled(decryptor.status(for: pkg) == .preparing)
+
+                switch decryptor.status(for: pkg) {
+                case .preparing:
+                    ProgressView("Preparing FairPlayed...")
+                case .ready:
+                    Button {
+                        decryptor.shareExisting(pkg)
+                    } label: {
+                        Label("Share Prepared IPA", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(VeloPillButtonStyle())
+                case let .failed(message):
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                case .idle:
+                    EmptyView()
+                }
+                Text("Velo prepares a FairPlayed helper. Sign it with your signing app, then open it to export the decrypted IPA.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                DisclosureGroup("Installation options") {
+                    VStack(alignment: .leading, spacing: 12) {
                         AsyncButton {
                             installer = try await Installer(archive: archive, path: url)
                         } label: {
-                            Text("Install")
+                            Label("Install", systemImage: "square.and.arrow.down")
                         }
                         .disabledWhenLoading()
                         .sheet(item: $installer) {
@@ -97,159 +133,149 @@ struct PackageView: View {
                         } content: {
                             InstallerView(installer: $0)
                         }
-
-                        Button("Install via AirDrop") {
-                            let newUrl = temporaryDirectory
+                        Button {
+                            let newURL = temporaryDirectory
                                 .appendingPathComponent("\(archive.software.bundleID)-\(archive.software.version)")
                                 .appendingPathExtension("ipa")
-                            try? FileManager.default.removeItem(at: newUrl)
-                            try? FileManager.default.copyItem(at: url, to: newUrl)
-                            AirDrop(items: [newUrl])
-                        }
-                    } header: {
-                        Text("Control")
-                    } footer: {
-                        if error.isEmpty {
-                            Text("Direct install may have limitations that cannot be bypassed. Use AirDrop if possible on another device.")
-                        } else {
-                            Text(error)
-                                .foregroundStyle(.red)
-                        }
-                    }
-                #endif
-
-                #if os(iOS)
-                    Section {
-                        Button {
-                            decryptor.prepare(pkg)
+                            try? FileManager.default.removeItem(at: newURL)
+                            try? FileManager.default.copyItem(at: url, to: newURL)
+                            AirDrop(items: [newURL])
                         } label: {
-                            Label(
-                                decryptor.status(for: pkg) == .preparing ? "Preparing FairPlayed..." : "Decrypt IPA",
-                                systemImage: "lock.open.fill"
-                            )
+                            Label("Install via AirDrop", systemImage: "airplayaudio")
                         }
-                        .disabled(decryptor.status(for: pkg) == .preparing)
-
-                        switch decryptor.status(for: pkg) {
-                        case .preparing:
-                            ProgressView("Preparing FairPlayed...")
-                        case .ready:
-                            Button {
-                                decryptor.shareExisting(pkg)
-                            } label: {
-                                Label("Share Prepared IPA", systemImage: "square.and.arrow.up")
-                            }
-                        case let .failed(message):
-                            Text(message).font(.footnote).foregroundStyle(.red)
-                        case .idle:
-                            EmptyView()
+                        if !error.isEmpty {
+                            Text(error).font(.footnote).foregroundStyle(.red)
                         }
-                    } header: {
-                        Text("FairPlay Decryption")
-                    } footer: {
-                        Text("Velo prepares a FairPlayed IPA containing this download. Sign and install that IPA using your signing app. Opening it starts decryption automatically and shares the complete result. Signing Asspp itself does not remove this separate requirement.")
                     }
-                #endif
-
-                Section {
-                    NavigationLink("Content Viewer") {
-                        FileListView(packageURL: pkg.targetLocation)
-                    }
-                    #if os(macOS)
-                        HStack {
-                            Button {
-                                NSWorkspace.shared.activateFileViewerSelecting([url])
-                            } label: {
-                                Text(url.path)
-                                    .multilineTextAlignment(.leading)
-                            }
-                            .help("Show in Finder")
-                            .buttonStyle(.borderless)
-                            .tint(.accentColor)
-                            Spacer()
-                            Button {
-                                let pasteboard = NSPasteboard.general
-                                pasteboard.clearContents()
-                                pasteboard.setString(url.path, forType: .string)
-                                copied = true
-                                Task { @MainActor in
-                                    try? await Task.sleep(for: .seconds(1))
-                                    copied = false
-                                }
-                            } label: {
-                                Image(systemName: copied ? "checkmark" : "document.on.document")
-                                    .contentTransition(.symbolEffect(.replace))
-                            }
-                            .help("Copy File Path")
-                            .buttonStyle(.borderless)
-                            .tint(.accentColor)
-                        }
-                    #endif
-                } header: {
-                    Text("Analysis")
-                } footer: {
-                    Text("Developer options.")
+                    .padding(.vertical, 9)
                 }
-            } else {
-                Section {
-                    let actions = downloads.getAvailableActions(for: pkg)
-                    ForEach(actions.filter { $0 != .delete }, id: \.self) { action in
-                        let label = downloads.getActionLabel(for: action)
-                        Button(label.title) {
-                            downloads.performDownloadAction(for: pkg, action: action)
-                        }
-                        .foregroundStyle(label.isDestructive ? .red : .primary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            #else
+                DeviceCTLInstallSection(package: pkg)
+            #endif
+        }
+    }
+
+    private var transferActions: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionTitle("Download")
+            HStack(spacing: 10) {
+                Text(pkg.hint)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer()
+                Text("\(Int(pkg.state.percent * 100))%")
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+            }
+            ProgressView(value: pkg.state.percent)
+                .tint(AssppTheme.accent)
+            HStack(spacing: 10) {
+                ForEach(downloads.getAvailableActions(for: pkg).filter { $0 != .delete }, id: \.self) { action in
+                    let label = downloads.getActionLabel(for: action)
+                    Button {
+                        downloads.performDownloadAction(for: pkg, action: action)
+                    } label: {
+                        Label(label.title, systemImage: label.systemImage)
                     }
-                } header: {
-                    Text("Incomplete Package")
-                } footer: {
-                    switch pkg.state.status {
-                    case .pending:
-                        Text("\(Int(pkg.state.percent * 100))%...")
-                    case .downloading:
-                        Text("\(Int(pkg.state.percent * 100))%...")
-                    case .paused:
-                        Text("Paused at \(Int(pkg.state.percent * 100))%")
-                    case .completed:
-                        Group {}
-                    case .failed:
-                        Text("Download failed.")
-                    }
+                    .buttonStyle(VeloPillButtonStyle())
                 }
             }
-
-            Section {
-                Text(pkg.account.account.email)
-                    .redacted(reason: .placeholder, isEnabled: vm.demoMode)
-                Text("\(pkg.account.account.store) - \(ApplePackage.Configuration.countryCode(for: pkg.account.account.store) ?? String(localized: "Unknown"))")
-            } header: {
-                Text("Account")
-            } footer: {
-                Text("This account is used to download this package. If you choose to AirDrop, your target device must sign in or previously signed in to this account and have at least one app installed.")
-            }
-
-            Section {
-                let deleteAction = DownloadAction.delete
-                let label = downloads.getActionLabel(for: deleteAction)
-                Button(label.title) {
-                    dismiss()
-                    Task { @MainActor in
-                        await Task.yield()
-                        downloads.performDownloadAction(for: pkg, action: deleteAction)
-                    }
-                }
-                .foregroundStyle(label.isDestructive ? .red : .primary)
-            } header: {
-                Text("Danger Zone")
-            } footer: {
-                Text(url.path)
+            if let error = pkg.state.error {
+                Text(error).font(.footnote).foregroundStyle(.red)
             }
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .background(AssppTheme.background)
-        .tint(AssppTheme.accent)
-        .navigationTitle(pkg.package.software.name)
+        .padding(14)
+        .background(AssppTheme.elevated, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var packageInformation: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            sectionTitle("Information")
+            VStack(spacing: 0) {
+                detailRow("Bundle ID", archive.software.bundleID)
+                Divider()
+                detailRow("Version", archive.software.version)
+                Divider()
+                detailRow("Developer", archive.software.sellerName)
+                if !archive.software.primaryGenreName.isEmpty {
+                    Divider()
+                    detailRow("Category", archive.software.primaryGenreName)
+                }
+                Divider()
+                detailRow("Requires", "iOS \(archive.software.minimumOsVersion)+")
+                if archive.software.userRatingCount > 0 {
+                    Divider()
+                    detailRow("Rating", String(format: "%.1f", archive.software.averageUserRating))
+                }
+            }
+            .padding(.horizontal, 14)
+            .background(AssppTheme.elevated, in: RoundedRectangle(cornerRadius: 15))
+        }
+    }
+
+    private var accountInformation: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("Account")
+            Text(pkg.account.account.email)
+                .font(.subheadline)
+                .redacted(reason: .placeholder, isEnabled: vm.demoMode)
+            Text("\(pkg.account.account.store) · \(ApplePackage.Configuration.countryCode(for: pkg.account.account.store) ?? String(localized: "Unknown"))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var advancedTools: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionTitle("More")
+            NavigationLink {
+                FileListView(packageURL: pkg.targetLocation)
+            } label: {
+                Label("Browse IPA Contents", systemImage: "folder")
+                    .font(.subheadline.weight(.medium))
+            }
+            #if os(macOS)
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                } label: {
+                    Label("Show in Finder", systemImage: "folder")
+                }
+            #endif
+            Divider()
+            Button(role: .destructive) {
+                dismiss()
+                Task { @MainActor in
+                    await Task.yield()
+                    downloads.performDownloadAction(for: pkg, action: .delete)
+                }
+            } label: {
+                Label("Delete Download", systemImage: "trash")
+                    .font(.subheadline)
+            }
+        }
+        .padding(.top, 5)
+    }
+
+    private func detailRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
+                .frame(width: 86, alignment: .leading)
+            Spacer(minLength: 0)
+            Text(value)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(3)
+                .minimumScaleFactor(0.8)
+                .textSelection(.enabled)
+        }
+        .font(.subheadline)
+        .padding(.vertical, 13)
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title).font(.title3.bold())
     }
 }
 
