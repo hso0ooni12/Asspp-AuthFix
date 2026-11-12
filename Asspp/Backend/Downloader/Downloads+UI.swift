@@ -196,9 +196,11 @@ extension Downloads {
                     do {
                         downloadOutput = try await self.prepareTicketWithRetries(account: &account.account, package: package, key: key)
                     } catch ApplePackageError.licenseRequired where licenseTransportInterrupted {
-                        throw NSError(domain: "Velo.LicenseTransport", code: 1, userInfo: [
-                            NSLocalizedDescriptionKey: "Apple's free-license connection was interrupted. Please retry the request or switch between Wi-Fi and mobile data."
-                        ])
+                        // The license POST might have succeeded just before
+                        // the transport dropped. Give Apple time to publish
+                        // entitlement, and repeat ONLY safe ticket reads.
+                        downloadOutput = try await self.verifyLicenseAfterInterruption(
+                            account: &account.account, package: package, key: key)
                     }
                 }
                 pendingPreparations[key] = .init(appName: package.software.name, stage: .preparingTransfer)
@@ -251,5 +253,31 @@ extension Downloads {
             }
         }
     }
-}
 
+    /// Apple may grant a free license before the response connection drops.
+    /// Poll the read-only download ticket for a short bounded period instead
+    /// of issuing another purchase request or asking for another GET tap.
+    private func verifyLicenseAfterInterruption(
+        account: inout Account, package: AppStore.AppPackage, key: DownloadRequestIdentity
+    ) async throws -> DownloadOutput {
+        for retry in 0...StoreDownloadProtocol.maximumPreparationRetries {
+            try Task.checkCancellation()
+            pendingPreparations[key] = .init(appName: package.software.name,
+                stage: .verifyingFreeLicense, retryAttempt: retry)
+            do {
+                return try await prepareTicketWithRetries(
+                    account: &account, package: package, key: key)
+            } catch ApplePackageError.licenseRequired {
+                guard retry < StoreDownloadProtocol.maximumPreparationRetries else {
+                    throw NSError(domain: "Velo.LicenseTransport", code: 1, userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Apple has not confirmed the free license. Verify this app under your Apple Account in the App Store before trying again."
+                    ])
+                }
+                try await Task.sleep(nanoseconds:
+                    StoreDownloadProtocol.preparationRetryDelayNanoseconds(retry))
+            }
+        }
+        throw StoreDownloadError.empty
+    }
+}

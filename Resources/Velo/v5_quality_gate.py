@@ -204,6 +204,8 @@ def test_public_beta_reliability_and_import():
 def test_resilient_get_and_history_56():
     coordinator = source("Asspp/Backend/Downloader/Downloads+UI.swift")
     assert "prepareTicketWithRetries(" in coordinator
+    assert "verifyLicenseAfterInterruption(" in coordinator
+    assert "repeat ONLY safe ticket reads" in coordinator
     assert "maximumPreparationRetries" in coordinator
     assert "case retrying" in coordinator and "case verifyingFreeLicense" in coordinator
     assert "ApplePackage.Purchase.purchase" in coordinator
