@@ -7,9 +7,9 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "5.3.1"
-BUILD = "2026111101"
-IPA_NAME = "Velo-5.3.1-Reliable-unsigned.ipa"
+VERSION = "5.3.2"
+BUILD = "2026111201"
+IPA_NAME = "Velo-5.3.2-Reliable-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()
@@ -87,7 +87,7 @@ def validate_sources():
         code = (ROOT / ("Asspp/Interface/" + name + ".swift")).read_text()
         assert "ASS•PP" not in code, name
     assert not (ROOT / "Asspp/Backend/Decryption/DirectFairPlayed.swift").exists()
-    print("PASS Velo 5.3.1 bounded transient retries, historical versions, route cooldown and stable core")
+    print("PASS Velo 5.3.2 bounded transient retries, historical versions, route cooldown and stable core")
 
 def validate_archive():
     spec = importlib.util.spec_from_file_location("r17_checks", ROOT / "Resources/R17/verify_release.py")
@@ -111,7 +111,7 @@ def validate_archive():
     path = ROOT / "artifacts/build-info.json"
     report = json.loads(path.read_text())
     report.update(
-        release="Velo 5.3.1 Reliable Downloads on stable R18/R20 core",
+        release="Velo 5.3.2 Reliable Downloads on stable R18/R20 core",
         displayName="Velo",
         preservesBundleIdentifier=True,
         quickDownloadFromSearch=True,
