@@ -72,7 +72,9 @@ class AppPackageArchive {
         let packageIdentifier = [package.id, package.software.bundleID.lowercased(), region, (package.entityType ?? .iPhone).rawValue]
             .joined()
             .lowercased()
-        _versionItems = Persist(key: "\(packageIdentifier).versions", defaultValue: [:])
+        // Prior commerce responses could return stale versions; this new
+        // cache stores only Info.plist verified labels.
+        _versionItems = Persist(key: "\(packageIdentifier).ipaVerifiedVersionsV2", defaultValue: [:])
         _versionIdentifiers = Persist(key: "\(packageIdentifier).versionNumbers", defaultValue: [])
     }
 
@@ -90,7 +92,7 @@ class AppPackageArchive {
     func package(for externalVersion: String) -> AppStore.AppPackage? {
         guard versionIdentifiers.contains(externalVersion) else { return nil }
         var pkg = package
-        pkg.software.version = versionItems[externalVersion]?.displayVersion ?? "ID \(externalVersion)"
+        pkg.software.version = versionItems[externalVersion]?.displayVersion ?? "Version unverified"
         pkg.externalVersionID = externalVersion
         return pkg
     }
@@ -181,9 +183,14 @@ class AppPackageArchive {
                 }) else { break }
                 let requestedPackage = self.package
                 do {
-                    let metadata = try await self.withLockedAccount(id: accountIdentifier) { userAccount in
-                        try await StoreDownloadService.versionMetadata(account: &userAccount.account, package: requestedPackage, versionID: version)
+                    let asset = try await self.withLockedAccount(id: accountIdentifier) { userAccount in
+                        try await StoreDownloadService.versionAsset(account: &userAccount.account,
+                                                                    package: requestedPackage, versionID: version)
                     }
+                    // Range inspection runs outside the account lock so GET
+                    // requests aren't blocked by CDN metadata downloads.
+                    let metadata = try await StoreDownloadService.versionMetadataFromAsset(
+                        asset, bundleID: requestedPackage.software.bundleID)
                     self.versionItems[version] = metadata
                 } catch {
                     if let failure = error as? StoreDownloadError {
@@ -220,9 +227,12 @@ class AppPackageArchive {
         Task {
             do {
                 let requestedPackage = self.package
-                let metadata = try await self.withLockedAccount(id: accountIdentifier) { userAccount in
-                    try await StoreDownloadService.versionMetadata(account: &userAccount.account, package: requestedPackage, versionID: versionID)
+                let asset = try await self.withLockedAccount(id: accountIdentifier) { userAccount in
+                    try await StoreDownloadService.versionAsset(account: &userAccount.account,
+                                                                package: requestedPackage, versionID: versionID)
                 }
+                let metadata = try await StoreDownloadService.versionMetadataFromAsset(
+                    asset, bundleID: requestedPackage.software.bundleID)
                 self.versionItems[versionID] = metadata
             } catch {
                 self.unavailableVersionIDs.insert(versionID)
