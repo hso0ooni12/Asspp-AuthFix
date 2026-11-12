@@ -201,6 +201,35 @@ def test_public_beta_reliability_and_import():
     assert ".build-authfix/DerivedData/Build/Intermediates.noindex" in workflow
 
 
+def test_resilient_get_and_history_56():
+    coordinator = source("Asspp/Backend/Downloader/Downloads+UI.swift")
+    assert "prepareTicketWithRetries(" in coordinator
+    assert "maximumPreparationRetries" in coordinator
+    assert "case retrying" in coordinator and "case verifyingFreeLicense" in coordinator
+    assert "ApplePackage.Purchase.purchase" in coordinator
+    policy = source("Asspp/Backend/AppStore/StoreDownloadProtocol.swift")
+    assert "shouldRetryPreparation(" in policy
+    assert "completedRetries < maximumPreparationRetries" in policy
+    assert "preparationRetryDelayNanoseconds" in policy
+    quick = source("Asspp/Interface/Search/QuickDownloadButton.swift")
+    assert 'Text("WAIT")' not in quick and "pendingPreparation.compactLabel" in quick
+    search = source("Asspp/Interface/Search/SearchView.swift")
+    assert 'Section("Preparing downloads")' in search and "prep.statusText" in search
+    product = source("Asspp/Interface/Search/ProductView.swift")
+    assert "activePreparation.statusText" in product
+    archived = source("Asspp/Backend/AppStore/AppPackageArchive.swift")
+    assert "refreshVersionHistory(" in archived
+    assert "self.versionIdentifiers = (Array(versions.reversed()) + self.versionIdentifiers)" in archived
+    assert "self.unavailableVersionIDs.formUnion(self.versionIdentifiers)" in archived
+    history = source("Asspp/Interface/Search/ProductHistoryView.swift")
+    assert "vm.refreshVersionHistory" in history
+    assert "vm.clearVersionItems()" not in history
+    service = source("Asspp/Backend/AppStore/StoreDownloadService.swift")
+    assert 'operation == "versions-modern"' in service
+    assert 'operation: "versions-modern"' in service
+    assert "if modernHistoryOnly { throw error }" in service
+
+
 if __name__ == "__main__":
     for test in (
         test_direct_app_count,
@@ -213,6 +242,7 @@ if __name__ == "__main__":
         test_smart_route_and_fast_search,
         test_app_store_native_54,
         test_public_beta_reliability_and_import,
+        test_resilient_get_and_history_56,
     ):
         test()
         print("PASS", test.__name__)

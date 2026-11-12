@@ -96,9 +96,14 @@ struct ProductHistoryView: View {
                 Rectangle()
                     .foregroundStyle(.clear)
                     .background(.ultraThinMaterial)
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .smallControlSizeOnMac()
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                    Text("Checking available versions…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .smallControlSizeOnMac()
             }
             .opacity(vm.loading && vm.versionIdentifiers.isEmpty ? 1 : 0)
             .animation(.default, value: vm.loading)

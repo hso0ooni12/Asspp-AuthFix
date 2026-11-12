@@ -7,9 +7,9 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "5.5.0"
-BUILD = "2026111203"
-IPA_NAME = "Velo-5.5.0-PublicBeta-unsigned.ipa"
+VERSION = "5.6.0"
+BUILD = "2026111204"
+IPA_NAME = "Velo-5.6.0-Resilient-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()
@@ -87,7 +87,7 @@ def validate_sources():
         code = (ROOT / ("Asspp/Interface/" + name + ".swift")).read_text()
         assert "ASS•PP" not in code, name
     assert not (ROOT / "Asspp/Backend/Decryption/DirectFairPlayed.swift").exists()
-    print("PASS Velo 5.5.0 bounded transient retries, historical versions, route cooldown and stable core")
+    print("PASS Velo 5.6.0 bounded transient retries, historical versions, route cooldown and stable core")
 
 def validate_archive():
     spec = importlib.util.spec_from_file_location("r17_checks", ROOT / "Resources/R17/verify_release.py")
@@ -111,7 +111,7 @@ def validate_archive():
     path = ROOT / "artifacts/build-info.json"
     report = json.loads(path.read_text())
     report.update(
-        release="Velo 5.5.0 Public Beta on stable R18/R20 core",
+        release="Velo 5.6.0 Resilient GET and History on stable R18/R20 core",
         displayName="Velo",
         preservesBundleIdentifier=True,
         quickDownloadFromSearch=True,
@@ -121,7 +121,7 @@ def validate_archive():
         downloadTransport="R20 per-request URLSession with temporary R3 cooldown and bounded transient retries",
         directDecryptionOfNewDownloads=False,
         deviceValidation="Public beta: physical iPhone testing required for Apple login, old versions and imported IPA decryption",
-        measuredSpeedImprovement="not benchmarked in CI",
+        measuredSpeedImprovement="unverified; compare cached rebuild timing separately",
         guardedDeletion=True,
         concurrentDownloads="Two byte transfers, serialized metadata per account",
         progressInSearch=True,
@@ -145,7 +145,7 @@ def validate_archive():
         assetCatalogBytes=asset_catalog_size,
         helperExportPicker=True,
         nativeBuildCache="Pinned native outputs and compiled Xcode modules cached across repeated branch builds",
-        appStorePreparation="Observable request stages before signed IPA URL is ready",
+        appStorePreparation="Per-stage status and bounded retries for transient safe Apple requests",
         keychainMigration="Device GUID migrated to non-synchronizable local keychain storage",
         preflightStorage="Batch helper estimates temporary disk space before extraction",
         settingsReset="Preferences only; downloaded IPAs and Apple accounts preserved",
