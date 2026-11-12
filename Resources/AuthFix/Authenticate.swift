@@ -112,6 +112,9 @@ public actor Authenticator {
                 let hasAppleResponder = !response.headers["x-responding-instance"].isEmpty
                 APLogger.info("AuthFix R2 route \(routeIndex + 1)/\(candidates.count) attempt \(attempt): HTTP \(status), bytes=\(body.count), AppleResponder=\(hasAppleResponder)")
                 if !AuthenticationRecovery.shouldRetry(status: status, body: body, hasLocation: hasLocation) { return response }
+                // Repeating a request to the same missing sign-in endpoint
+                // only delays recovery. Try the next approved Apple route.
+                if AuthenticationRecovery.isMissingEndpoint(status) { break }
                 if attempt < AuthenticationRecovery.attemptsPerRoute {
                     try await Task.sleep(nanoseconds: 2_000_000_000)
                 }
