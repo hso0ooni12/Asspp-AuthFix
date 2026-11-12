@@ -313,7 +313,7 @@ private struct PackageManifestRow: View {
                 HStack(spacing: 8) {
                     Text(manifest.hint)
                         .font(.caption)
-                        .foregroundStyle(manifest.state.error == nil ? .secondary : .red)
+                        .foregroundStyle(manifest.state.error == nil ? Color.secondary : Color.red)
                         .lineLimit(2)
                     Spacer(minLength: 6)
                     Text("\(Int(manifest.state.percent * 100))%")
