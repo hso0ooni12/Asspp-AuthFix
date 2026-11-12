@@ -527,6 +527,23 @@ enum FairPlayedHelper {
             throw PreparationError.notIPA
         }
         let archive = try Archive(url: imported, accessMode: .read)
+        // Imported IPA files are untrusted. Limit expanded size and check free
+        // space before ZIPFoundation extracts or duplicates any application.
+        let expandedLimit: UInt64 = 6 * 1024 * 1024 * 1024
+        var expandedSize: UInt64 = 0
+        for entry in archive {
+            let size = UInt64(entry.uncompressedSize)
+            guard size <= expandedLimit, expandedSize <= expandedLimit - size else {
+                throw PreparationError.unsafeArchive
+            }
+            expandedSize += size
+        }
+        let requiredBytes = Int64(expandedSize) * 3 + 256 * 1024 * 1024
+        if let available = try? documentsDirectory.resourceValues(forKeys:
+            [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
+           available < requiredBytes {
+            throw PreparationError.insufficientSpace(needed: requiredBytes, available: available)
+        }
         // Do not unpack untrusted files until the central path-safety check.
         try validateArchive(imported)
         let plistEntries = archive.filter { entry in
