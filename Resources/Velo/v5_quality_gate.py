@@ -232,6 +232,28 @@ def test_resilient_get_and_history_56():
     assert "if modernHistoryOnly { throw error }" in service
 
 
+def test_verified_versions_and_ticket_recovery_57():
+    service = source("Asspp/Backend/AppStore/StoreDownloadService.swift")
+    protocol = source("Asspp/Backend/AppStore/StoreDownloadProtocol.swift")
+    archive = source("Asspp/Backend/AppStore/AppPackageArchive.swift")
+    ui = source("Asspp/Interface/Search/ProductHistoryView.swift")
+    workflow = source(".github/workflows/velo-5-ipa.yml")
+    builder = source("Resources/AuthFix/build.sh")
+    assert "private enum RemoteIPAInfoPlist" in service
+    assert "versionMetadataFromAsset" in service and "versionAsset(" in service
+    assert "session.bytes(for: request)" in service and "http.statusCode == 206" in service
+    assert "16_777_216" in service and "2_097_152" in service
+    assert "CFBundleShortVersionString" in service and "CFBundleIdentifier" in service
+    assert "BundleID" not in archive or "ipaVerifiedVersionsV2" in archive
+    assert "ipaVerifiedVersionsV2" in archive
+    assert "Version ID" not in ui and 'Text(verified.displayVersion)' in ui
+    assert "volumeStore-invalid-package" in protocol
+    assert 'StoreDownloadProtocol.fallbackReason(ticket) == nil' in service
+    assert "restore-keys:" in workflow and "velo-57-xcode-" in workflow
+    assert "SWIFT_COMPILATION_MODE=singlefile" in builder
+    assert "build-timings.txt" in builder
+
+
 if __name__ == "__main__":
     for test in (
         test_direct_app_count,
@@ -245,6 +267,7 @@ if __name__ == "__main__":
         test_app_store_native_54,
         test_public_beta_reliability_and_import,
         test_resilient_get_and_history_56,
+        test_verified_versions_and_ticket_recovery_57,
     ):
         test()
         print("PASS", test.__name__)
