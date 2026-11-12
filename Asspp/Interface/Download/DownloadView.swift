@@ -6,6 +6,9 @@
 //
 
 import SwiftUI
+#if os(iOS)
+import UniformTypeIdentifiers
+#endif
 
 struct DownloadView: View {
     @State private var vm = Downloads.this
@@ -13,6 +16,12 @@ struct DownloadView: View {
     @State private var selectionMode = false
     @State private var selectedIDs: Set<UUID> = []
     @State private var showBatchError = false
+    #if os(iOS)
+    @State private var showIPAImporter = false
+    @State private var importingIPA = false
+    @State private var importError: String?
+    @State private var showImportError = false
+    #endif
     @State private var selectedFilter: DownloadFilter = .all
 
     private enum DownloadFilter: String, CaseIterable, Identifiable {
@@ -65,6 +74,18 @@ struct DownloadView: View {
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
 
+            #if os(iOS)
+            if importingIPA {
+                HStack(spacing: 12) {
+                    ProgressView()
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Preparing imported IPA").font(.subheadline.weight(.semibold))
+                        Text("Validating archive and building FairPlayed helper")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            #endif
             if selectionMode {
                 HStack {
                     Text("\(selectedIDs.count) selected")
@@ -144,6 +165,24 @@ struct DownloadView: View {
         .navigationDestination(for: PackageManifest.self) { manifest in
             PackageView(pkg: manifest)
         }
+        #if os(iOS)
+        .fileImporter(isPresented: $showIPAImporter,
+                      allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .item],
+                      allowsMultipleSelection: false) { result in
+            switch result {
+            case let .success(files):
+                if let file = files.first { prepareImportedIPA(file) }
+            case let .failure(error):
+                importError = error.localizedDescription
+                showImportError = true
+            }
+        }
+        .alert("Import IPA", isPresented: $showImportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importError ?? "Unable to import IPA.")
+        }
+        #endif
         .alert("Bulk Preparation", isPresented: $showBatchError) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -165,11 +204,45 @@ struct DownloadView: View {
                     if !selectionMode { selectedIDs.removeAll() }
                 }
             }
+            #if os(iOS)
+            Button {
+                showIPAImporter = true
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+            }
+            .disabled(importingIPA || decryptor.isPreparingBatch)
+            .accessibilityLabel("Import IPA from Files")
+            #endif
             NavigationLink(destination: AddDownloadView()) {
                 Image(systemName: "plus")
             }
         }
     }
+
+    #if os(iOS)
+    /// Keep the file provider access scoped to the detached packaging task.
+    /// Errors are surfaced locally; credentials and file contents aren't logged.
+    private func prepareImportedIPA(_ url: URL) {
+        guard !importingIPA else { return }
+        importingIPA = true
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    let canAccess = url.startAccessingSecurityScopedResource()
+                    defer {
+                        if canAccess { url.stopAccessingSecurityScopedResource() }
+                    }
+                    return try FairPlayedHelper.prepareImportedIPA(url)
+                }.value
+                decryptor.sharePackage = PreparedDecryptionPackage(url: result)
+            } catch {
+                importError = error.localizedDescription
+                showImportError = true
+            }
+            importingIPA = false
+        }
+    }
+    #endif
 
     private var packageList: some View {
         Group {
