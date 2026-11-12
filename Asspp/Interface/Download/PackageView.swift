@@ -519,6 +519,40 @@ enum FairPlayedHelper {
         documentsDirectory.appendingPathComponent("FairPlayed", isDirectory: true)
     }
 
+    /// Imported IPA files use the same checked FairPlayed packaging pipeline
+    /// as Store downloads. Importing does not bypass FairPlay entitlements or
+    /// decrypt code by itself; the separate signed helper performs that on device.
+    static func prepareImportedIPA(_ imported: URL) throws -> URL {
+        guard imported.pathExtension.lowercased() == "ipa" else {
+            throw PreparationError.notIPA
+        }
+        let archive = try Archive(url: imported, accessMode: .read)
+        // Do not unpack untrusted files until the central path-safety check.
+        try validateArchive(imported)
+        let plistEntries = archive.filter { entry in
+            let parts = entry.path.split(separator: "/", omittingEmptySubsequences: false)
+            return parts.count == 3 && parts[0] == "Payload"
+                && parts[1].hasSuffix(".app") && parts[2] == "Info.plist"
+        }
+        guard plistEntries.count == 1, let infoEntry = plistEntries.first,
+              infoEntry.uncompressedSize <= 1024 * 1024
+        else { throw PreparationError.notIPA }
+        var data = Data()
+        _ = try archive.extract(infoEntry) { chunk in
+            data.append(chunk)
+        }
+        guard let info = try PropertyListSerialization.propertyList(
+            from: data, options: [], format: nil) as? [String: Any],
+              let bundleID = info["CFBundleIdentifier"] as? String, !bundleID.isEmpty,
+              let version = info["CFBundleShortVersionString"] as? String, !version.isEmpty
+        else { throw PreparationError.notIPA }
+        let name = (info["CFBundleDisplayName"] as? String)
+            ?? (info["CFBundleName"] as? String)
+            ?? bundleID
+        return try prepare(downloadedIPA: imported, expectedBundleID: bundleID,
+                           name: name, version: version)
+    }
+
     static func prepare(downloadedIPA: URL, expectedBundleID: String, name: String, version: String) throws -> URL {
         guard let shell = Bundle.main.url(forResource: "FairPlayed-shell", withExtension: "zip")
         else { throw PreparationError.missingShell }
