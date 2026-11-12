@@ -519,9 +519,38 @@ extension SearchView {
             .padding(.bottom, 6)
         }
 
+
+        private var storefrontFilters: some View {
+            HStack(spacing: 8) {
+                ForEach(EntityType.allCases) { type in
+                    Button {
+                        guard searchType != type else { return }
+                        searchType = type
+                        if !searchKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            search()
+                        }
+                    } label: {
+                        Label(type.rawValue, systemImage: type.iconName)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(searchType == type ? AssppTheme.accent : AssppTheme.elevated,
+                                        in: Capsule())
+                            .foregroundStyle(searchType == type ? Color.white : Color.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 7)
+        }
+
         var modernContent: some View {
             VStack(spacing: 0) {
                 pinnedSearchField
+                storefrontFilters
                 List {
                 if let searchError {
                     Label(searchError, systemImage: "exclamationmark.triangle")
@@ -596,7 +625,11 @@ extension SearchView {
             .navigationDestination(for: PackageManifest.self) { manifest in
                 PackageView(pkg: manifest)
             }
-            .onAppear { consumePendingFocus() }
+            .onAppear {
+                consumePendingFocus()
+                let query = searchKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !query.isEmpty && searchResult.isEmpty && !searching { search() }
+            }
             .task(id: searchRegion + vm.accounts.map(\.id).joined(separator: "|")) {
                 if searchRegion == "ALL" { vm.prepareDownloads() }
                 else { vm.prepareDownloads(region: searchRegion) }
