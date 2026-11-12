@@ -45,9 +45,18 @@ struct ProductHistoryView: View {
                 ForEach(vm.versionIdentifiers, id: \.self) { key in
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(vm.versionItems[key]?.displayVersion ?? "Version ID \(key)")
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(.primary)
+                        if let verified = vm.versionItems[key] {
+                            Text(verified.displayVersion)
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(.primary)
+                        } else {
+                            Text(vm.loading ? "Verifying version…" : "Version unavailable")
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            Text("Exact version not yet verified by Apple")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
                         if let date = vm.versionItems[key]?.releaseDate, date != .distantPast {
                             Text(date, style: .date)
                                 .font(.caption)
