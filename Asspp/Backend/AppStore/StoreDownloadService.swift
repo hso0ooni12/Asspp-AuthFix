@@ -299,10 +299,12 @@ enum StoreDownloadService {
         // Log a fixed stage code so failures can be diagnosed without leaking
         // credentials, device identifiers, the blob, or a signed package URL.
         logger.info("Store download [\(trace)]: kbsync preparation starting")
-        // Coalesce identical concurrent KBSync work instead of launching
-        // duplicate expensive native generations during overlapping requests.
-        let generation = await DownloadPreparation.shared.generation(
-            guid: guid, dsid: dsid, priority: .userInitiated)
+        // Generate only after an explicit GET request, keeping the native
+        // preparation detached from the UI and on a user-initiated priority.
+        // Never preload the expensive emulator while browsing/searching.
+        let generation = await Task.detached(priority: .userInitiated) {
+            R3KBSync.generate(guid: guid, directoryServicesIdentifier: dsid)
+        }.value
         logger.info("Store download [\(trace)]: kbsync status=\(generation.status)")
         guard let blob = generation.blob else { throw StoreDownloadError.invalidPackage }
 
