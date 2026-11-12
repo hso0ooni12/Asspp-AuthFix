@@ -169,8 +169,18 @@ enum StoreDownloadService {
                 guard !modernHistoryOnly else { throw StoreDownloadError.empty }
                 response = try await StoreDownloadProtocol.fetchWithFallback(version: version) { endpoint, requestedVersion in
                     effectiveVersion = requestedVersion
-                    return try await fetch(session: session, endpoint: endpoint, account: &account,
-                                           appID: app.id, version: requestedVersion, trace: trace)
+                    let ticket = try await fetch(session: session, endpoint: endpoint,
+                                                 account: &account, appID: app.id,
+                                                 version: requestedVersion, trace: trace)
+                    if operation == "download",
+                       StoreDownloadProtocol.failureCode(ticket) != "9610" {
+                        // An HTTP 200 may still contain a mismatched app or
+                        // incomplete songList. Trigger the one-time independent
+                        // endpoint fallback instead of surfacing a dead-end.
+                        _ = try StoreDownloadProtocol.packageItem(
+                            ticket, bundleID: app.bundleID, version: requestedVersion)
+                    }
+                    return ticket
                 } resolveVersion: {
                     // An unpinned redownload can return a tvOS build for an iOS app.
                     guard let region else { throw StoreDownloadError.catalogUnavailable }
