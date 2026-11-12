@@ -186,6 +186,22 @@ class AppPackageArchive {
                     }
                     self.versionItems[version] = metadata
                 } catch {
+                    if let failure = error as? StoreDownloadError {
+                        let accessDenied: Bool
+                        switch failure {
+                        case .response(403), .emptyResponse(403): accessDenied = true
+                        default: accessDenied = false
+                        }
+                        if accessDenied {
+                            // A denial affects this Apple session, not just
+                            // one historical row. Keep every real ID visible,
+                            // stop the repeated rejected metadata requests.
+                            self.unavailableVersionIDs.formUnion(self.versionIdentifiers)
+                            self.error = error.localizedDescription
+                            logger.info("Historical metadata access denied; preserved all cached IDs")
+                            break
+                        }
+                    }
                     // Preserve the ID as a selectable version even when
                     // its display date/name cannot be resolved.
                     self.unavailableVersionIDs.insert(version)
