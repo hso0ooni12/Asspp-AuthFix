@@ -313,7 +313,7 @@ struct MainView: View {
                                 .font(.caption.weight(.semibold))
                                 .tracking(1.2)
                                 .foregroundStyle(.secondary)
-                            Button { onSearch("TikTok") } label: {
+                            Button { onSearch("") } label: {
                                 ZStack(alignment: .bottomLeading) {
                                     RoundedRectangle(cornerRadius: 22)
                                         .fill(LinearGradient(
@@ -356,13 +356,13 @@ struct MainView: View {
                             }
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 4),
                                       spacing: 9) {
-                                ForEach(categories, id: \.0) { item in
-                                    Button { onSearch(item.2) } label: {
+                                ForEach(0..<categories.count, id: \.self) { index in
+                                    Button { onSearch(categories[index].2) } label: {
                                         VStack(spacing: 9) {
-                                            Image(systemName: item.1)
+                                            Image(systemName: categories[index].1)
                                                 .font(.system(size: 23))
                                                 .frame(height: 30)
-                                            Text(item.0)
+                                            Text(categories[index].0)
                                                 .font(.caption2.weight(.medium))
                                                 .lineLimit(1)
                                                 .minimumScaleFactor(0.75)
