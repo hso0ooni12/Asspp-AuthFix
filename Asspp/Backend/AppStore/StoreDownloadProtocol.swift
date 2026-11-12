@@ -227,10 +227,17 @@ enum StoreDownloadProtocol {
                 if case .emptyResponse(403) = $0 { return true }
                 return false
             } ?? false
-            guard isTransientRequestFailure(error) || denied else {
+            let invalidShape: Bool
+            if case .invalidPackage = error as? StoreDownloadError {
+                invalidShape = true
+            } else {
+                invalidShape = false
+            }
+            guard isTransientRequestFailure(error) || denied || invalidShape else {
                 throw error
             }
-            onFallback(denied ? "volumeStore-access-denied" : "volumeStore-transient")
+            onFallback(invalidShape ? "volumeStore-invalid-package" :
+                       (denied ? "volumeStore-access-denied" : "volumeStore-transient"))
             let resolved: String = if let version, !version.isEmpty {
                 version
             } else {
@@ -241,8 +248,13 @@ enum StoreDownloadProtocol {
                 return try await fetch(.redownload, resolved)
             } catch {
                 try Task.checkCancellation()
-                guard isTransientRequestFailure(error) else { throw error }
-                onFallback("redownload-transient")
+                guard isTransientRequestFailure(error) ||
+                    ((error as? StoreDownloadError).map {
+                        if case .invalidPackage = $0 { return true }
+                        return false
+                    } ?? false)
+                else { throw error }
+                onFallback("redownload-recovery")
                 return try await fetch(.update, resolved)
             }
         }
