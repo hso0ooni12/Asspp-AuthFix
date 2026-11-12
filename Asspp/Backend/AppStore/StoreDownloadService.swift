@@ -1,5 +1,6 @@
 import ApplePackage
 import Foundation
+import ZIPFoundation
 
 /// Reuse the known-working R20/R17 per-request Apple URLSession. Keep Apple's raw bodies, cookies and signed
 /// asset URLs out of both the Xcode console and the in-app log viewer.
@@ -17,7 +18,7 @@ enum StoreDownloadService {
     static func download(account: inout Account, package: AppStore.AppPackage) async throws -> DownloadOutput {
         let email = account.email
         return try await product(account: &account, package: package, version: package.externalVersionID, operation: "download") { item in
-            try output(item: item, email: email)
+            try await output(item: item, email: email, bundleID: package.software.bundleID)
         }
     }
 
@@ -79,20 +80,25 @@ enum StoreDownloadService {
         }
     }
 
-    static func versionMetadata(account: inout Account, package: AppStore.AppPackage, versionID: String) async throws -> VersionMetadata {
+    /// The ticket request runs under the account lock; the signed IPA
+    /// Range reader runs outside that lock to avoid delaying GET.
+    static func versionAsset(account: inout Account, package: AppStore.AppPackage, versionID: String) async throws -> URL {
         try await product(account: &account, package: package, version: versionID, operation: "version-metadata") { item in
             let metadata = item["metadata"] as? [String: Any] ?? [:]
-            let version = StoreDownloadProtocol.historyDisplayVersion(metadata: metadata, externalID: versionID)
-            let dateString = metadata["releaseDate"] as? String ?? ""
-            let fractional = ISO8601DateFormatter()
-            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let releaseDate = ISO8601DateFormatter().date(from: dateString)
-                ?? fractional.date(from: dateString) ?? .distantPast
-            return VersionMetadata(displayVersion: version, releaseDate: releaseDate)
+            guard StoreProtocol.string(metadata["softwareVersionExternalIdentifier"]) == versionID,
+                  let address = item["URL"] as? String,
+                  let url = URL(string: address), url.scheme == "https", url.host != nil
+            else { throw StoreDownloadError.invalidPackage }
+            return url
         }
     }
 
-    private static func product<Result>(account: inout Account, package: AppStore.AppPackage, version: String?, operation: String, parse: ([String: Any]) throws -> Result) async throws -> Result {
+    static func versionMetadataFromAsset(_ url: URL, bundleID: String) async throws -> VersionMetadata {
+        let info = try await RemoteIPAInfoPlist.read(url: url, bundleID: bundleID)
+        return VersionMetadata(displayVersion: info.version, releaseDate: info.date)
+    }
+
+    private static func product<Result>(account: inout Account, package: AppStore.AppPackage, version: String?, operation: String, parse: ([String: Any]) async throws -> Result) async throws -> Result {
         let trace = String(UUID().uuidString.prefix(8))
         let app = package.software
         let version = version.flatMap { $0.isEmpty ? nil : $0 }
@@ -190,7 +196,7 @@ enum StoreDownloadService {
                 throw ApplePackageError.licenseRequired
             }
             let item = try StoreDownloadProtocol.packageItem(response, bundleID: app.bundleID, version: effectiveVersion)
-            let result = try parse(item)
+            let result = try await parse(item)
             if operation == "download" {
                 if preferredResponse != nil {
                     await DownloadRouteAdvisor.shared.preferredSucceeded(scope: routeScope)
@@ -422,12 +428,10 @@ enum StoreDownloadService {
     }
 
     /// ApplePackage's DownloadOutput format, also consumed by SignatureInjector.
-    private static func output(item: [String: Any], email: String) throws -> DownloadOutput {
+    private static func output(item: [String: Any], email: String, bundleID: String) async throws -> DownloadOutput {
         guard let url = item["URL"] as? String, let asset = URL(string: url),
               ["https", "http"].contains(asset.scheme), asset.host != nil,
               var metadata = item["metadata"] as? [String: Any],
-              let version = metadata["bundleShortVersionString"] as? String,
-              let build = metadata["bundleVersion"] as? String,
               let signatures = item["sinfs"] as? [[String: Any]], !signatures.isEmpty
         else { throw StoreDownloadError.invalidPackage }
         let sinfs = try signatures.map { signature -> Sinf in
@@ -435,6 +439,16 @@ enum StoreDownloadService {
                 throw StoreDownloadError.invalidPackage
             }
             return Sinf(id: id, sinf: data)
+        }
+        var version = metadata["bundleShortVersionString"] as? String ?? ""
+        var build = metadata["bundleVersion"] as? String ?? ""
+        if version.isEmpty || build.isEmpty {
+            guard asset.scheme == "https" else { throw StoreDownloadError.invalidPackage }
+            let verified = try await RemoteIPAInfoPlist.read(url: asset, bundleID: bundleID)
+            version = verified.version
+            build = verified.build
+            metadata["bundleShortVersionString"] = version
+            metadata["bundleVersion"] = build
         }
         metadata["apple-id"] = email
         metadata["userName"] = email
