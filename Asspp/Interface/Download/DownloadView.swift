@@ -13,6 +13,35 @@ struct DownloadView: View {
     @State private var selectionMode = false
     @State private var selectedIDs: Set<UUID> = []
     @State private var showBatchError = false
+    @State private var selectedFilter: DownloadFilter = .all
+
+    private enum DownloadFilter: String, CaseIterable, Identifiable {
+        case all = "All"
+        case active = "Active"
+        case ready = "Ready"
+        case completed = "Prepared"
+        var id: Self { self }
+    }
+
+    private var activeManifests: [PackageManifest] {
+        vm.manifests.filter { !$0.completed }
+    }
+
+    private var preparedManifests: [PackageManifest] {
+        vm.manifests.filter {
+            guard $0.completed else { return false }
+            if case .ready = decryptor.status(for: $0) { return true }
+            return false
+        }
+    }
+
+    private var readyManifests: [PackageManifest] {
+        vm.manifests.filter { manifest in
+            guard manifest.completed else { return false }
+            if case .ready = decryptor.status(for: manifest) { return false }
+            return true
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -23,6 +52,19 @@ struct DownloadView: View {
 
     private var content: some View {
         List {
+            Section {
+                Picker("Downloads", selection: $selectedFilter) {
+                    ForEach(DownloadFilter.allCases) { filter in
+                        Text(filter.rawValue).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.vertical, 5)
+            }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+
             if selectionMode {
                 HStack {
                     Text("\(selectedIDs.count) selected")
@@ -45,7 +87,7 @@ struct DownloadView: View {
                 }
             }
 
-            if !vm.pendingPreparations.isEmpty {
+            if (selectedFilter == .all || selectedFilter == .active) && !vm.pendingPreparations.isEmpty {
                 ForEach(Array(vm.pendingPreparations.keys).sorted(by: { $0.bundleID < $1.bundleID }), id: \.self) { key in
                     if let item = vm.pendingPreparations[key] {
                         HStack(spacing: 12) {
@@ -131,19 +173,38 @@ struct DownloadView: View {
 
     private var packageList: some View {
         Group {
-            if vm.manifests.contains(where: { !$0.completed }) {
+            if (selectedFilter == .all || selectedFilter == .active) && !activeManifests.isEmpty {
                 Section("Active") {
-                    ForEach(vm.manifests.filter { !$0.completed }, id: \.id) { req in
+                    ForEach(activeManifests, id: \.id) { req in
                         manifestRow(req)
                     }
                 }
             }
-            if vm.manifests.contains(where: \.completed) {
+            if (selectedFilter == .all || selectedFilter == .ready) && !readyManifests.isEmpty {
                 Section("Ready") {
-                    ForEach(vm.manifests.filter(\.completed), id: \.id) { req in
+                    ForEach(readyManifests, id: \.id) { req in
                         manifestRow(req)
                     }
                 }
+            }
+            if (selectedFilter == .all || selectedFilter == .completed) && !preparedManifests.isEmpty {
+                Section("Prepared") {
+                    ForEach(preparedManifests, id: \.id) { req in
+                        manifestRow(req)
+                    }
+                }
+            }
+            if selectedFilter != .all &&
+                ((selectedFilter == .active && activeManifests.isEmpty && vm.pendingPreparations.isEmpty) ||
+                 (selectedFilter == .ready && readyManifests.isEmpty) ||
+                 (selectedFilter == .completed && preparedManifests.isEmpty)) {
+                Text("Nothing here yet")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
         }
     }
@@ -167,7 +228,9 @@ struct DownloadView: View {
                 deleteImmediately(id: req.id)
             }
         }
-        .listRowInsets(EdgeInsets(top: 8, leading: 18, bottom: 8, trailing: 18))
+        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
     }
 
     private func deleteImmediately(id: UUID) {
@@ -192,57 +255,103 @@ private struct PackageManifestRow: View {
     @State private var shareOriginal: PreparedDecryptionPackage?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 10) {
-                    NavigationLink(value: manifest) {
-                        ArchivePreviewView(archive: manifest.package,
-                                           preferredIconSize: 60, showsVersion: false)
-                    }
-                    .buttonStyle(.plain)
-                    if manifest.completed {
-                        Button {
-                            decryptor.prepare(manifest)
-                        } label: {
-                            Image(systemName: "lock.open.fill")
-                                .font(.system(size: 17, weight: .semibold))
-                                .frame(width: 52)
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 12) {
+                NavigationLink(value: manifest) {
+                    ArchivePreviewView(archive: manifest.package,
+                                       preferredIconSize: 60, showsVersion: true)
+                }
+                .buttonStyle(.plain)
+
+                switch manifest.state.status {
+                case .completed:
+                    Button {
+                        decryptor.prepare(manifest)
+                    } label: {
+                        if decryptor.status(for: manifest) == .preparing {
+                            ProgressView().tint(.white)
+                        } else {
+                            Text("Decrypt")
+                                .font(.caption.weight(.bold))
                         }
-                        .buttonStyle(VeloPillButtonStyle())
-                        .disabled(decryptor.status(for: manifest) == .preparing)
-                        .accessibilityLabel("Decrypt IPA")
                     }
+                    .buttonStyle(VeloPillButtonStyle(prominent: true))
+                    .disabled(decryptor.status(for: manifest) == .preparing)
+                    .accessibilityLabel("Decrypt IPA")
+                case .pending, .downloading:
+                    Button {
+                        vm.suspend(request: manifest)
+                    } label: {
+                        Image(systemName: "pause.fill")
+                            .font(.subheadline.weight(.bold))
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(VeloPillButtonStyle())
+                    .accessibilityLabel("Pause download")
+                case .paused:
+                    Button {
+                        vm.resume(request: manifest)
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(VeloPillButtonStyle())
+                    .accessibilityLabel("Resume download")
+                case .failed:
+                    Button {
+                        vm.restart(request: manifest)
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(VeloPillButtonStyle())
+                    .accessibilityLabel("Retry download")
                 }
-                if !manifest.completed {
-                    SimpleProgress(progress: manifest.state.percent)
-                        .animation(.interactiveSpring, value: manifest.state.percent)
+            }
+
+            if !manifest.completed {
+                HStack(spacing: 8) {
+                    Text(manifest.hint)
+                        .font(.caption)
+                        .foregroundStyle(manifest.state.error == nil ? .secondary : .red)
+                        .lineLimit(2)
+                    Spacer(minLength: 6)
+                    Text("\(Int(manifest.state.percent * 100))%")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
-                HStack(spacing: 10) {
+                ProgressView(value: manifest.state.percent)
+                    .tint(AssppTheme.accent)
+            } else {
+                HStack(spacing: 8) {
                     switch decryptor.status(for: manifest) {
                     case .preparing:
                         Label("Preparing FairPlayed...", systemImage: "lock.open.fill")
                             .foregroundStyle(AssppTheme.accent)
                     case .ready:
                         Label("Ready to Sign", systemImage: "checkmark.seal.fill")
-                        .foregroundStyle(.secondary)
+                            .foregroundStyle(.secondary)
                     case let .failed(message):
                         Button {
                             showPreparationError = true
                         } label: {
                             Label(message, systemImage: "exclamationmark.triangle")
-                                .foregroundStyle(.primary)
-                                .lineLimit(2)
+                                .lineLimit(1)
                         }
                         .buttonStyle(.plain)
                     case .idle:
-                        Text(manifest.hint)
+                        Label("Ready to Decrypt", systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text(manifest.creation.formatted(date: .abbreviated, time: .omitted))
+                    Text(manifest.package.software.version)
+                        .foregroundStyle(.secondary)
                 }
-                .font(.system(.footnote, design: .rounded))
-                .lineLimit(1)
-
+                .font(.caption)
+            }
         }
+        .padding(14)
+        .background(AssppTheme.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contextMenu {
             if manifest.completed {
                 Button {
