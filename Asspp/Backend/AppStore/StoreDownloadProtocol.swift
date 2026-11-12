@@ -16,7 +16,9 @@ enum StoreDownloadError: LocalizedError {
         case .invalidRedirect:
             String(localized: "Apple returned an invalid download redirect.")
         case let .response(status), let .emptyResponse(status):
-            String(localized: "Apple's download service returned an invalid response (HTTP \(status)).")
+            status == 403
+                ? String(localized: "Apple denied access (HTTP 403). Check that this Apple Account owns the app and matches its App Store region. History may not be available for every app. Repeated identical requests will not fix an access denial.")
+                : String(localized: "Apple's download service returned an invalid response (HTTP \(status)).")
         case .invalidPackage:
             String(localized: "Apple returned incomplete or mismatched package information.")
         case .empty:
@@ -199,10 +201,18 @@ enum StoreDownloadProtocol {
             primary = try await fetch(.volumeStore, version)
         } catch {
             try Task.checkCancellation()
-            guard isTransientRequestFailure(error) else {
+            // A different authorized Apple endpoint can occasionally serve a
+            // licensed app when the volume-store handler rejects it. Never
+            // retry the same denied endpoint or silently purchase a license.
+            let denied = (error as? StoreDownloadError).map {
+                if case .response(403) = $0 { return true }
+                if case .emptyResponse(403) = $0 { return true }
+                return false
+            } ?? false
+            guard isTransientRequestFailure(error) || denied else {
                 throw error
             }
-            onFallback("volumeStore-transient")
+            onFallback(denied ? "volumeStore-access-denied" : "volumeStore-transient")
             let resolved: String = if let version, !version.isEmpty {
                 version
             } else {
