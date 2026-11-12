@@ -241,6 +241,8 @@ def test_verified_versions_and_ticket_recovery_57():
     builder = source("Resources/AuthFix/build.sh")
     assert "private enum RemoteIPAInfoPlist" in service
     assert "versionMetadataFromAsset" in service and "versionAsset(" in service
+    assert 'operation == "download" || operation == "version-metadata"' in service
+    assert "tryPreferred = await DownloadRouteAdvisor.shared.shouldTryPreferred(scope: routeScope)" in service
     assert "session.bytes(for: request)" in service and "http.statusCode == 206" in service
     assert "16_777_216" in service and "2_097_152" in service
     assert "CFBundleShortVersionString" in service and "CFBundleIdentifier" in service

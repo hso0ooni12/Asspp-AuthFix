@@ -1,4 +1,4 @@
-name: Velo 5.7.0 - Verified IPA Metadata
+name: Velo 5.7.1 - Verified History Fix
 
 on:
   push:
@@ -282,12 +282,12 @@ jobs:
           R6_TCI_ARCHIVE: ${{ github.workspace }}/.ci-cache/libunicorn.a
         run: |
           set -euo pipefail
-          sed -i '' -e 's/4.2.7/5.7.0/g' -e 's/2026110705/2026111205/g' Resources/AuthFix/build.sh
+          sed -i '' -e 's/4.2.7/5.7.1/g' -e 's/2026110705/2026111206/g' Resources/AuthFix/build.sh
           bash Resources/AuthFix/build.sh
-          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.7.0-Verified-unsigned.ipa
-          shasum -a 256 artifacts/Velo-5.7.0-Verified-unsigned.ipa > artifacts/Velo-5.7.0-Verified-unsigned.ipa.sha256
-          unzip -Z -1 artifacts/Velo-5.7.0-Verified-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
-          unzip -p artifacts/Velo-5.7.0-Verified-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.7.1-HistoryFix-unsigned.ipa
+          shasum -a 256 artifacts/Velo-5.7.1-HistoryFix-unsigned.ipa > artifacts/Velo-5.7.1-HistoryFix-unsigned.ipa.sha256
+          unzip -Z -1 artifacts/Velo-5.7.1-HistoryFix-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
+          unzip -p artifacts/Velo-5.7.1-HistoryFix-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -tq "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayed'
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayedIcon.png'
@@ -310,10 +310,10 @@ jobs:
       - name: Upload Velo IPA and diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: Velo-5.7.0-Verified-unsigned
+          name: Velo-5.7.1-HistoryFix-unsigned
           path: |
-            artifacts/Velo-5.7.0-Verified-unsigned.ipa
-            artifacts/Velo-5.7.0-Verified-unsigned.ipa.sha256
+            artifacts/Velo-5.7.1-HistoryFix-unsigned.ipa
+            artifacts/Velo-5.7.1-HistoryFix-unsigned.ipa.sha256
             artifacts/build-info.json
             artifacts/build-timings.txt
             artifacts/transport-tests.log
