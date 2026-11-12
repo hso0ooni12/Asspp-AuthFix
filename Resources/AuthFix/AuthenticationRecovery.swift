@@ -5,7 +5,10 @@ public struct AuthenticationDeliveryError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         let summary = statuses.map { String($0) }.joined(separator: ", ")
-        return "AuthFix R2: Apple returned no usable sign-in response (HTTP \(summary)). Recovery attempts are exhausted. No account authentication result was received."
+        if !statuses.isEmpty && statuses.allSatisfy({ $0 == 404 || $0 == 204 }) {
+            return "Apple's sign-in endpoints are unavailable (HTTP \(summary)). The app did not receive an authentication result. Try later or confirm the Apple Account in the official App Store. Repeated password attempts will not resolve missing endpoints."
+        }
+        return "Apple sign-in did not complete (HTTP \(summary)). Please verify the Apple Account in the App Store and retry later. No successful authentication result was received."
     }
 }
 
@@ -13,7 +16,9 @@ public struct AuthenticationDeliveryError: LocalizedError, Sendable {
 /// Credential errors, verification challenges and rate limits are never replayed.
 enum AuthenticationRecovery {
     static let attemptsPerRoute = 2
-    static let maximumSends = 12
+
+    static func isMissingEndpoint(_ status: UInt) -> Bool { status == 404 || status == 204 }
+    static let maximumSends = 6
 
     static func shouldRetry(status: UInt, body: Data, hasLocation: Bool) -> Bool {
         if !body.isEmpty,
