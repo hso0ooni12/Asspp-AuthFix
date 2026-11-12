@@ -163,6 +163,19 @@ struct DownloadProtocolChecks {
             precondition(requests.count == 1)
         }
 
+        // A valid HTTP response with the wrong app/metadata must recover
+        // through a separate authenticated endpoint exactly once.
+        requests = []
+        _ = try await StoreDownloadProtocol.fetchWithFallback(version: "123") { endpoint, version in
+            requests.append((endpoint, version))
+            if endpoint == .volumeStore { throw StoreDownloadError.invalidPackage }
+            return success
+        } resolveVersion: { fatalError("Unexpected version lookup") } onFallback: {
+            precondition($0 == "volumeStore-invalid-package")
+        }
+        precondition(requests.map(\.0) == [.volumeStore, .redownload])
+        precondition(requests.allSatisfy { $0.1 == "123" })
+
         // Even when both endpoints are empty, there is no retry loop.
         requests = []
         let stillEmpty = try await StoreDownloadProtocol.fetchWithFallback(version: "123") { endpoint, version in
