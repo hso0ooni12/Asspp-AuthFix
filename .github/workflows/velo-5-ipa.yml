@@ -1,13 +1,12 @@
-name: Velo 5.4.0 - App Store Native UI
+name: Velo 5.5.0 - Public Reliability Beta
 
 on:
   push:
-    branches: [velo-v5-development, velo-v5-1-monochrome, velo-v5-2-native-polish, velo-v5-3-speed, velo-v5-4-appstore-ui]
+    branches: [velo-v5-development, velo-v5-1-monochrome, velo-v5-2-native-polish, velo-v5-3-speed, velo-v5-4-appstore-ui, velo-v5-5-public-beta]
     paths:
       - "Asspp/Backend/AppStore/**"
       - "Asspp/Interface/Download/PackageView.swift"
-      - "Resources/AuthFix/build.sh"
-      - "Resources/AuthFix/prepare.py"
+      - "Resources/AuthFix/**"
       - "Resources/R3/KBSyncBridge/**"
       - "Resources/FairPlayed/one-page-stub.patch"
       - "Resources/FairPlayed/auto-export-and-share.patch"
@@ -74,6 +73,17 @@ jobs:
             .build-authfix/PackageTests
             .build-authfix/SourcePackages
           key: velo-5.2-macos26-swiftpm-${{ hashFiles('Resources/AuthFix/*.swift', 'Resources/AuthFix/prepare.py', 'Asspp.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+      # Cache Xcode's compiled SwiftPM modules, not just downloaded sources.
+      # Stable source/SDK key makes successive builds on this branch incremental.
+      # Xcode's build manifest recompiles changed application files itself.
+      - name: Restore and save Xcode compiled build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build-authfix/DerivedData/Build/Intermediates.noindex
+            .build-authfix/DerivedData/Build/Products
+            .build-authfix/DerivedData/ModuleCache.noindex
+          key: velo-55-macos26intel-xcode-v1-${{ hashFiles('Asspp.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Configuration/Release.xcconfig') }}
       - name: Verify free-only license automation and Velo identity
         shell: bash
         run: |
@@ -85,6 +95,7 @@ jobs:
           "${RUNNER_TEMP}/free-license-checks"
           python3 Resources/Velo/verify_release.py --source-only
           python3 Resources/Velo/v5_quality_gate.py
+          swiftc -frontend -parse Resources/AuthFix/AuthenticationRecovery.swift
           for source in \
             Asspp/Backend/Downloader/Downloads.swift \
             Asspp/Backend/Downloader/Downloads+UI.swift \
@@ -268,12 +279,12 @@ jobs:
           R6_TCI_ARCHIVE: ${{ github.workspace }}/.ci-cache/libunicorn.a
         run: |
           set -euo pipefail
-          sed -i '' -e 's/4.2.7/5.4.0/g' -e 's/2026110705/2026111202/g' Resources/AuthFix/build.sh
+          sed -i '' -e 's/4.2.7/5.5.0/g' -e 's/2026110705/2026111203/g' Resources/AuthFix/build.sh
           bash Resources/AuthFix/build.sh
-          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.4.0-AppStore-unsigned.ipa
-          shasum -a 256 artifacts/Velo-5.4.0-AppStore-unsigned.ipa > artifacts/Velo-5.4.0-AppStore-unsigned.ipa.sha256
-          unzip -Z -1 artifacts/Velo-5.4.0-AppStore-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
-          unzip -p artifacts/Velo-5.4.0-AppStore-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.5.0-PublicBeta-unsigned.ipa
+          shasum -a 256 artifacts/Velo-5.5.0-PublicBeta-unsigned.ipa > artifacts/Velo-5.5.0-PublicBeta-unsigned.ipa.sha256
+          unzip -Z -1 artifacts/Velo-5.5.0-PublicBeta-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
+          unzip -p artifacts/Velo-5.5.0-PublicBeta-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -tq "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayed'
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayedIcon.png'
@@ -296,10 +307,10 @@ jobs:
       - name: Upload Velo IPA and diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: Velo-5.4.0-AppStore-unsigned
+          name: Velo-5.5.0-PublicBeta-unsigned
           path: |
-            artifacts/Velo-5.4.0-AppStore-unsigned.ipa
-            artifacts/Velo-5.4.0-AppStore-unsigned.ipa.sha256
+            artifacts/Velo-5.5.0-PublicBeta-unsigned.ipa
+            artifacts/Velo-5.5.0-PublicBeta-unsigned.ipa.sha256
             artifacts/build-info.json
             artifacts/transport-tests.log
             artifacts/sap-setup-probe-result.txt

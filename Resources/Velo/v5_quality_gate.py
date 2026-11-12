@@ -179,6 +179,28 @@ def test_app_store_native_54():
     assert "VeloPillButtonStyle(prominent: true)" in history
 
 
+def test_public_beta_reliability_and_import():
+    downloads = source("Asspp/Interface/Download/DownloadView.swift")
+    assert "fileImporter(isPresented: $showIPAImporter" in downloads
+    assert "startAccessingSecurityScopedResource()" in downloads
+    assert "FairPlayedHelper.prepareImportedIPA(url)" in downloads
+    helper = source("Asspp/Interface/Download/PackageView.swift")
+    assert "static func prepareImportedIPA" in helper
+    assert "infoEntry.uncompressedSize <= 1024 * 1024" in helper
+    assert "validateArchive(imported)" in helper
+    assert "expectedBundleID: bundleID" in helper
+    protocol = source("Asspp/Backend/AppStore/StoreDownloadProtocol.swift")
+    assert "volumeStore-access-denied" in protocol
+    assert "status == 403" in protocol
+    auth = source("Resources/AuthFix/Authenticate.swift")
+    assert "AuthenticationRecovery.isMissingEndpoint(status)" in auth
+    recovery = source("Resources/AuthFix/AuthenticationRecovery.swift")
+    assert "maximumSends = 6" in recovery
+    workflow = source(".github/workflows/velo-5-ipa.yml")
+    assert "Restore and save Xcode compiled build outputs" in workflow
+    assert ".build-authfix/DerivedData/Build/Intermediates.noindex" in workflow
+
+
 if __name__ == "__main__":
     for test in (
         test_direct_app_count,
@@ -190,6 +212,7 @@ if __name__ == "__main__":
         test_native_polish_and_size_controls,
         test_smart_route_and_fast_search,
         test_app_store_native_54,
+        test_public_beta_reliability_and_import,
     ):
         test()
         print("PASS", test.__name__)
