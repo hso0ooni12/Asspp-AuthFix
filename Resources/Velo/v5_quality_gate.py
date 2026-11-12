@@ -153,6 +153,32 @@ def test_smart_route_and_fast_search():
     assert 'Section("Active")' in downloads and 'Section("Ready")' in downloads
 
 
+def test_app_store_native_54():
+    main = source("Asspp/Interface/Welcome/MainView.swift")
+    assert "VeloHomeView" in main
+    assert 'Tab("Home"' in main and 'Tab("Search"' in main
+    assert 'Tab("Downloads"' in main and 'Tab("Settings"' in main
+    assert 'static let accent = Color(red:' in main
+    assert "onSearch" in main and "showAccounts" in main
+    product = source("Asspp/Interface/Search/ProductView.swift")
+    assert "software.screenshotUrls" in product and 'sectionTitle("Preview")' in product
+    assert 'sectionTitle("Information")' in product and 'sectionTitle("Version History")' in product
+    assert "AppPackageArchive(" in product and "Download Requested" in product
+    downloads = source("Asspp/Interface/Download/DownloadView.swift")
+    assert "DownloadFilter" in downloads and "ProgressView(value: manifest.state.percent)" in downloads
+    assert "decryptor.prepare(manifest)" in downloads
+    details = source("Asspp/Interface/Download/PackageView.swift")
+    assert 'sectionTitle("Ready to Decrypt")' in details
+    assert 'sectionTitle("Information")' in details
+    assert "AssppScreenHeader(" not in details
+    search = source("Asspp/Interface/Search/SearchView.swift")
+    assert "pinnedSearchField" in search and "storefrontFilters" in search
+    assert "searchKeyFocused" in search
+    history = source("Asspp/Interface/Search/ProductHistoryView.swift")
+    assert 'Section("Previous Versions")' in history
+    assert "VeloPillButtonStyle(prominent: true)" in history
+
+
 if __name__ == "__main__":
     for test in (
         test_direct_app_count,
@@ -163,6 +189,7 @@ if __name__ == "__main__":
         test_monochrome_and_helper_export,
         test_native_polish_and_size_controls,
         test_smart_route_and_fast_search,
+        test_app_store_native_54,
     ):
         test()
         print("PASS", test.__name__)

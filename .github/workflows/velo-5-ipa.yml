@@ -1,8 +1,8 @@
-name: Velo 5.3.2 - Pinned Search and History
+name: Velo 5.4.0 - App Store Native UI
 
 on:
   push:
-    branches: [velo-v5-development, velo-v5-1-monochrome, velo-v5-2-native-polish, velo-v5-3-speed]
+    branches: [velo-v5-development, velo-v5-1-monochrome, velo-v5-2-native-polish, velo-v5-3-speed, velo-v5-4-appstore-ui]
     paths:
       - "Asspp/Backend/AppStore/**"
       - "Asspp/Interface/Download/PackageView.swift"
@@ -268,12 +268,12 @@ jobs:
           R6_TCI_ARCHIVE: ${{ github.workspace }}/.ci-cache/libunicorn.a
         run: |
           set -euo pipefail
-          sed -i '' -e 's/4.2.7/5.3.2/g' -e 's/2026110705/2026111201/g' Resources/AuthFix/build.sh
+          sed -i '' -e 's/4.2.7/5.4.0/g' -e 's/2026110705/2026111202/g' Resources/AuthFix/build.sh
           bash Resources/AuthFix/build.sh
-          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.3.2-Reliable-unsigned.ipa
-          shasum -a 256 artifacts/Velo-5.3.2-Reliable-unsigned.ipa > artifacts/Velo-5.3.2-Reliable-unsigned.ipa.sha256
-          unzip -Z -1 artifacts/Velo-5.3.2-Reliable-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
-          unzip -p artifacts/Velo-5.3.2-Reliable-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.4.0-AppStore-unsigned.ipa
+          shasum -a 256 artifacts/Velo-5.4.0-AppStore-unsigned.ipa > artifacts/Velo-5.4.0-AppStore-unsigned.ipa.sha256
+          unzip -Z -1 artifacts/Velo-5.4.0-AppStore-unsigned.ipa | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
+          unzip -p artifacts/Velo-5.4.0-AppStore-unsigned.ipa 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -tq "${RUNNER_TEMP}/packed-fairplayed-shell.zip"
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayed'
           unzip -Z -1 "${RUNNER_TEMP}/packed-fairplayed-shell.zip" | grep -F 'FairPlayed.app/FairPlayedIcon.png'
@@ -296,10 +296,10 @@ jobs:
       - name: Upload Velo IPA and diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: Velo-5.3.2-Reliable-unsigned
+          name: Velo-5.4.0-AppStore-unsigned
           path: |
-            artifacts/Velo-5.3.2-Reliable-unsigned.ipa
-            artifacts/Velo-5.3.2-Reliable-unsigned.ipa.sha256
+            artifacts/Velo-5.4.0-AppStore-unsigned.ipa
+            artifacts/Velo-5.4.0-AppStore-unsigned.ipa.sha256
             artifacts/build-info.json
             artifacts/transport-tests.log
             artifacts/sap-setup-probe-result.txt
