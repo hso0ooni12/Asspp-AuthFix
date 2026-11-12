@@ -123,7 +123,12 @@ enum StoreDownloadService {
             let modernHistoryOnly = operation == "versions-modern"
             if modernHistoryOnly {
                 tryPreferred = true
-            } else if operation == "download" {
+            } else if operation == "download" || operation == "version-metadata" {
+                // The authenticated modern route is also necessary when
+                // resolving exact historical versions: legacy volumeStore
+                // frequently denies per-version metadata with HTTP 403.
+                // Reuse the same account-aware cooldown to avoid expensive
+                // repeated KBSync attempts when the modern path is down.
                 tryPreferred = await DownloadRouteAdvisor.shared.shouldTryPreferred(scope: routeScope)
             } else {
                 tryPreferred = false
@@ -216,7 +221,7 @@ enum StoreDownloadService {
             }
             let item = try StoreDownloadProtocol.packageItem(response, bundleID: app.bundleID, version: effectiveVersion)
             let result = try await parse(item)
-            if operation == "download" {
+            if operation == "download" || operation == "version-metadata" {
                 if preferredResponse != nil {
                     await DownloadRouteAdvisor.shared.preferredSucceeded(scope: routeScope)
                 } else if preferredFailureWorthRemembering {
