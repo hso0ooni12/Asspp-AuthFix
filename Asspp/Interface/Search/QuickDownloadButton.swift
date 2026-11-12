@@ -82,7 +82,7 @@ struct QuickDownloadButton: View {
                     }
                     .frame(width: 52)
                 }
-                .buttonStyle(VeloPillButtonStyle())
+                .buttonStyle(VeloPillButtonStyle(prominent: true))
                 .disabled(requesting)
                 .accessibilityLabel(requesting ? "Preparing download" : "Download IPA")
                 .contextMenu {
