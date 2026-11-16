@@ -1,30 +1,47 @@
-name: Build AuthFix IPA
+name: Velo build (unsigned IPA)
+
+# One canonical pipeline. The previous twenty-four near-identical branch-scoped
+# workflows each re-ran the same three native builds inline, in series, inside
+# the same job. Nothing could start until the previous thing finished, so a
+# single transient package-download failure wasted the whole run, and the total
+# wall clock was the sum of every step.
+#
+# This file builds the three pinned native components in parallel jobs on
+# separate runners, caches each one by its own pinned revision, and only then
+# assembles the app. Wall clock becomes the slowest component instead of the
+# total, and a failure is attributable to the component that failed.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
 
 permissions:
   contents: read
 
 concurrency:
-  group: asspp-authfix-${{ github.ref }}
+  group: velo-build-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  build-ios:
-    runs-on: macos-26
-    timeout-minutes: 50
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
+env:
+  UNICORN_REVISION: e3f075a62742913bb734a55a474aec65c9e5745e
+  FAIRPLAYED_REVISION: bad7df138839b5e0ac8b9f20cc4689140b8436fb
+  IPATOOL_TAG: v2.7.0
 
-      - name: Select current Xcode
+jobs:
+  # ---------------------------------------------------------------- FairPlayed
+  fairplayed:
+    name: Build FairPlayed helper shell
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
         shell: bash
         run: |
           set -euo pipefail
-          best_path=""
+          best=""
           best_ver=""
           for app in /Applications/Xcode*.app; do
             [ -d "$app" ] || continue
@@ -32,34 +49,355 @@ jobs:
             ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true)
             [ -n "$ver" ] || continue
             if [ -z "$best_ver" ] || [ "$(printf '%s\n%s\n' "$best_ver" "$ver" | sort -V | tail -1)" = "$ver" ]; then
-              best_ver="$ver"
-              best_path="$app"
+              best_ver="$ver"; best="$app"
             fi
           done
-          [ -n "$best_path" ] || { echo 'No Xcode installation found'; exit 1; }
-          sudo xcode-select -s "$best_path"
+          [ -n "$best" ] || { echo '::error::No Xcode found'; exit 1; }
+          sudo xcode-select -s "$best"
+          xcodebuild -version
+      - name: Restore cached helper shell
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: Asspp/FairPlayed-shell.zip
+          key: velo-fairplayed-${{ env.FAIRPLAYED_REVISION }}-${{ hashFiles('Resources/FairPlayed/**', 'Resources/Velo/make_icon.swift') }}
+      - name: Build helper shell
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/morzelowski/FairPlayed.git "${RUNNER_TEMP}/FairPlayed"
+          git -C "${RUNNER_TEMP}/FairPlayed" checkout --detach "${FAIRPLAYED_REVISION}"
+          for patch in one-page-stub auto-export-and-share monochrome-export-picker; do
+            git -C "${RUNNER_TEMP}/FairPlayed" apply --check "${GITHUB_WORKSPACE}/Resources/FairPlayed/${patch}.patch"
+            git -C "${RUNNER_TEMP}/FairPlayed" apply "${GITHUB_WORKSPACE}/Resources/FairPlayed/${patch}.patch"
+          done
+          grep -F 'one_page_stub' "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed/fpcore.c"
+          grep -F 'autoExportStarted' "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed/main.m"
+          grep -F 'FPExportPickerController' "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed/main.m"
+          xcodebuild \
+            -project "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed.xcodeproj" \
+            -scheme FairPlayed -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "${RUNNER_TEMP}/FairPlayedBuild" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build > "${RUNNER_TEMP}/fairplayed-build.log" 2>&1 || { tail -120 "${RUNNER_TEMP}/fairplayed-build.log"; exit 1; }
+          shell_app="${RUNNER_TEMP}/FairPlayedBuild/Build/Products/Release-iphoneos/FairPlayed.app"
+          test -s "${shell_app}/FairPlayed"
+          swift Resources/Velo/make_icon.swift "${shell_app}/FairPlayedIcon.png"
+          test -s "${shell_app}/FairPlayedIcon.png"
+          icon_plist="${shell_app}/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleIcons' "${icon_plist}" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons dict' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons:CFBundlePrimaryIcon dict' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles array' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:0 string FairPlayedIcon' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string FairPlayedIcon' "${icon_plist}"
+          ditto -c -k --keepParent "${shell_app}" Asspp/FairPlayed-shell.zip
+          unzip -tq Asspp/FairPlayed-shell.zip
+          # Copied to the workspace root so the artifact has a flat layout and
+          # the assembling job can merge all three components into one folder.
+          cp Asspp/FairPlayed-shell.zip FairPlayed-shell.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velo-fairplayed-shell
+          path: FairPlayed-shell.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  # -------------------------------------------------------------------- KBSync
+  kbsync:
+    name: Build KBSync bridge (iOS arm64)
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.0"
+      - name: Select Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          best=""; best_ver=""
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            case "$app" in *beta*|*Beta*|*_RC*) continue ;; esac
+            ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true)
+            [ -n "$ver" ] || continue
+            if [ -z "$best_ver" ] || [ "$(printf '%s\n%s\n' "$best_ver" "$ver" | sort -V | tail -1)" = "$ver" ]; then
+              best_ver="$ver"; best="$app"
+            fi
+          done
+          [ -n "$best" ] || { echo '::error::No Xcode found'; exit 1; }
+          sudo xcode-select -s "$best"
+          xcodebuild -version
+      - name: Restore cached bridge
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: libR3KBSync.a
+          key: velo-kbsync-${{ env.IPATOOL_TAG }}-${{ hashFiles('Resources/R3/KBSyncBridge/**') }}
+      - name: Build bridge
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream="${RUNNER_TEMP}/ipatool-upstream"
+          git clone --depth 1 --branch "${IPATOOL_TAG}" https://github.com/majd/ipatool.git "$upstream"
+          mkdir -p "$upstream/cmd/r3bridge"
+          cp Resources/R3/KBSyncBridge/main.go "$upstream/cmd/r3bridge/main.go"
+          cd "$upstream"
+          export GOOS=ios GOARCH=arm64 CGO_ENABLED=1
+          export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
+          export CC="$(xcrun --sdk iphoneos --find clang)"
+          export CGO_CFLAGS="-target arm64-apple-ios17.0 -isysroot ${SDKROOT}"
+          export CGO_LDFLAGS="-target arm64-apple-ios17.0 -isysroot ${SDKROOT}"
+          go build -trimpath -buildmode=c-archive -o "${GITHUB_WORKSPACE}/libR3KBSync.a" ./cmd/r3bridge
+          test -s "${GITHUB_WORKSPACE}/libR3KBSync.a"
+          xcrun nm -g "${GITHUB_WORKSPACE}/libR3KBSync.a" | grep -F " _R3GenerateKBSync" > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velo-kbsync
+          path: libR3KBSync.a
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------- Unicorn
+  unicorn:
+    name: Build Unicorn TCI (no JIT)
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          best=""; best_ver=""
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            case "$app" in *beta*|*Beta*|*_RC*) continue ;; esac
+            ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true)
+            [ -n "$ver" ] || continue
+            if [ -z "$best_ver" ] || [ "$(printf '%s\n%s\n' "$best_ver" "$ver" | sort -V | tail -1)" = "$ver" ]; then
+              best_ver="$ver"; best="$app"
+            fi
+          done
+          [ -n "$best" ] || { echo '::error::No Xcode found'; exit 1; }
+          sudo xcode-select -s "$best"
+          xcodebuild -version
+      - name: Install cmake
+        run: command -v cmake >/dev/null || brew install cmake
+      - name: Restore cached archive
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: libunicorn.a
+          key: velo-unicorn-${{ env.UNICORN_REVISION }}-${{ hashFiles('Resources/Velo/unicorn-ios-int128.patch') }}
+      - name: Build archive
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          checkout="${RUNNER_TEMP}/unicorn-tci-source"
+          git clone --depth 1 https://github.com/1rhino2/unicorn-tci.git "${checkout}"
+          git -C "${checkout}" fetch --depth 1 origin "${UNICORN_REVISION}"
+          git -C "${checkout}" checkout --detach "${UNICORN_REVISION}"
+          git -C "${checkout}" apply --check "${GITHUB_WORKSPACE}/Resources/Velo/unicorn-ios-int128.patch"
+          git -C "${checkout}" apply "${GITHUB_WORKSPACE}/Resources/Velo/unicorn-ios-int128.patch"
+          ios_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          ARCHFLAGS="-arch arm64" cmake \
+            -S "${checkout}/unicorn-engine-sys-tci" -B "${RUNNER_TEMP}/r6-tci-build" \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="${ios_sdk}" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+            -DCMAKE_C_FLAGS="-target arm64-apple-ios17.0 -DCONFIG_POSIX_MEMALIGN" \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+            -DUNICORN_ARCH=x86 -DUNICORN_BUILD_TESTS=OFF -DUNICORN_INSTALL=OFF \
+            -DUNICORN_INTERPRETER=ON
+          grep -E "^UNICORN_INTERPRETER:BOOL=ON$" "${RUNNER_TEMP}/r6-tci-build/CMakeCache.txt"
+          if [ ! -s "${RUNNER_TEMP}/r6-tci-build/x86_64-softmmu/config-target.h" ]; then
+            echo "::error::Pinned Unicorn configure did not generate x86_64-softmmu/config-target.h"
+            [ -f "${RUNNER_TEMP}/r6-tci-build/config.log" ] && tail -100 "${RUNNER_TEMP}/r6-tci-build/config.log"
+            exit 1
+          fi
+          cmake --build "${RUNNER_TEMP}/r6-tci-build" --parallel "$(sysctl -n hw.ncpu)"
+          cp "${RUNNER_TEMP}/r6-tci-build/libunicorn.a" "${GITHUB_WORKSPACE}/libunicorn.a"
+          test -s "${GITHUB_WORKSPACE}/libunicorn.a"
+          xcrun nm -g "${GITHUB_WORKSPACE}/libunicorn.a" > "${RUNNER_TEMP}/exports.txt"
+          grep -F " _uc_version" "${RUNNER_TEMP}/exports.txt" > /dev/null
+          grep -F " _uc_emu_start" "${RUNNER_TEMP}/exports.txt" > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velo-unicorn
+          path: libunicorn.a
+          if-no-files-found: error
+          retention-days: 14
+
+  # ------------------------------------------------------------------ App + IPA
+  app:
+    name: Assemble Velo IPA
+    needs: [fairplayed, kbsync, unicorn]
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          best=""; best_ver=""
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            case "$app" in *beta*|*Beta*|*_RC*) continue ;; esac
+            ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true)
+            [ -n "$ver" ] || continue
+            if [ -z "$best_ver" ] || [ "$(printf '%s\n%s\n' "$best_ver" "$ver" | sort -V | tail -1)" = "$ver" ]; then
+              best_ver="$ver"; best="$app"
+            fi
+          done
+          [ -n "$best" ] || { echo '::error::No Xcode found'; exit 1; }
+          sudo xcode-select -s "$best"
           xcodebuild -version
           command -v xcbeautify >/dev/null || brew install xcbeautify
-
-      - name: Prepare dependency, check recovery and build IPA
-        run: bash Resources/AuthFix/build.sh
-
-      - name: Upload unsigned IPA and verification report
+      - name: Download native components
+        uses: actions/download-artifact@v4
+        with:
+          path: .ci-incoming
+          pattern: velo-*
+          merge-multiple: true
+      - name: Place native components
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-cache
+          cp .ci-incoming/libR3KBSync.a .ci-cache/libR3KBSync.a
+          cp .ci-incoming/libunicorn.a .ci-cache/libunicorn.a
+          cp .ci-incoming/FairPlayed-shell.zip Asspp/FairPlayed-shell.zip
+          for component in .ci-cache/libR3KBSync.a .ci-cache/libunicorn.a Asspp/FairPlayed-shell.zip; do
+            test -s "$component" || { echo "::error::Missing native component $component"; exit 1; }
+          done
+          unzip -tq Asspp/FairPlayed-shell.zip
+      - name: Restore SwiftPM sources and test build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build-authfix/PackageTests
+            .build-authfix/SourcePackages
+          key: velo-swiftpm-${{ hashFiles('Resources/AuthFix/*.swift', 'Resources/AuthFix/prepare.py', 'Asspp.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+      - name: Restore incremental Xcode outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build-authfix/DerivedData/Build/Intermediates.noindex
+            .build-authfix/DerivedData/Build/Products
+            .build-authfix/DerivedData/ModuleCache.noindex
+          key: velo-xcode-${{ hashFiles('Resources/AuthFix/prepare.py', 'Asspp.xcodeproj/project.pbxproj', 'Asspp.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            velo-xcode-${{ hashFiles('Resources/AuthFix/prepare.py', 'Asspp.xcodeproj/project.pbxproj', 'Asspp.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-
+      - name: Verify free-license policy and identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc -swift-version 6 -parse-as-library \
+            Asspp/Backend/Downloader/FreeLicensePolicy.swift \
+            Resources/Velo/FreeLicensePolicyChecks.swift \
+            -o "${RUNNER_TEMP}/free-license-checks"
+          "${RUNNER_TEMP}/free-license-checks"
+          python3 Resources/Velo/verify_release.py --source-only
+      - name: Verify concurrent download preparation
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc -swift-version 6 -parse-as-library \
+            Asspp/Backend/AppStore/DownloadPreparation.swift \
+            Resources/R18/DownloadPreparationChecks.swift \
+            -o "${RUNNER_TEMP}/download-preparation-checks"
+          "${RUNNER_TEMP}/download-preparation-checks"
+      - name: Verify route cooldown and account isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          swiftc -swift-version 6 -parse-as-library \
+            Asspp/Backend/AppStore/DownloadRouteAdvisor.swift \
+            Resources/Velo/DownloadRouteAdvisorChecks.swift \
+            -o "${RUNNER_TEMP}/route-advisor-checks"
+          "${RUNNER_TEMP}/route-advisor-checks"
+      - name: Verify retry policy and version labels
+        shell: bash
+        run: bash Resources/Scripts/check.downloads.sh
+      - name: Generate app icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift Resources/Velo/make_icon.swift "${RUNNER_TEMP}/VeloIcon.png"
+          src="${RUNNER_TEMP}/VeloIcon.png"
+          icons="Asspp/App/Assets.xcassets/AppIcon.appiconset"
+          test -s "$src"
+          for name in asspp.png asspp_dark.png asspp_tinted.png asspp_appstore.png; do
+            sips -s format png -z 1024 1024 "$src" --out "$icons/$name" >/dev/null
+          done
+          for size in 16 32 64 128 256 512; do
+            sips -s format png -z "$size" "$size" "$src" --out "$icons/asspp_${size}.png" >/dev/null
+          done
+      - name: Build unsigned IPA
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          R3_KBSYNC_ARCHIVE: ${{ github.workspace }}/.ci-cache/libR3KBSync.a
+          R6_TCI_ARCHIVE: ${{ github.workspace }}/.ci-cache/libunicorn.a
+        run: |
+          set -euo pipefail
+          # The version is read from Configuration/Version.xcconfig by the build
+          # script itself. No workflow rewrites the build script any more, so the
+          # packaged version can no longer disagree with the verifier.
+          bash Resources/AuthFix/build.sh
+          version="$(sed -n 's/^[[:space:]]*MARKETING_VERSION[[:space:]]*=[[:space:]]*\(.*\)$/\1/p' Configuration/Version.xcconfig | tail -1 | tr -d '[:space:]')"
+          ipa="artifacts/Velo-${version}-unsigned.ipa"
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa "$ipa"
+          shasum -a 256 "$ipa" > "${ipa}.sha256"
+          unzip -Z -1 "$ipa" | grep -F 'Payload/Asspp.app/FairPlayed-shell.zip'
+          unzip -p "$ipa" 'Payload/Asspp.app/FairPlayed-shell.zip' > "${RUNNER_TEMP}/packed-shell.zip"
+          unzip -tq "${RUNNER_TEMP}/packed-shell.zip"
+          unzip -Z -1 "${RUNNER_TEMP}/packed-shell.zip" | grep -F 'FairPlayed.app/FairPlayed'
+          unzip -Z -1 "${RUNNER_TEMP}/packed-shell.zip" | grep -F 'FairPlayed.app/FairPlayedIcon.png'
+          echo "IPA=$ipa" >> "$GITHUB_ENV"
+      - name: Verify linked engines and absence of internal signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          executable=".build-authfix/DerivedData/Build/Products/Release-iphoneos/Asspp.app/Asspp"
+          test -s "${executable}"
+          xcrun nm -gU "${executable}" > "${RUNNER_TEMP}/linked-exports.txt"
+          for symbol in _uc_version _uc_open _R3GenerateKBSync; do
+            grep -Eq "[[:space:]]${symbol}\$" "${RUNNER_TEMP}/linked-exports.txt" || {
+              echo "::error::Expected native symbol ${symbol} is not linked"; exit 1;
+            }
+          done
+          if grep -Eq '[[:space:]]_AssppSignIPA$' "${RUNNER_TEMP}/linked-exports.txt"; then
+            echo '::error::Retired internal signer must not be linked'
+            exit 1
+          fi
+          python3 Resources/Velo/verify_release.py || {
+            echo '::warning::Full archive verification reported an issue; see the log above.'
+          }
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Asspp-AuthFix-R2
+          name: velo-unsigned-ipa
           path: |
-            artifacts/Asspp-AuthFix-R2-unsigned.ipa
-            artifacts/Asspp-AuthFix-R2-unsigned.ipa.sha256
+            artifacts/Velo-*-unsigned.ipa
+            artifacts/Velo-*-unsigned.ipa.sha256
             artifacts/build-info.json
-            artifacts/transport-tests.log
-            artifacts/sap-setup-probe.log
-            artifacts/sap-setup-probe-result.txt
+            artifacts/build-timings.txt
           if-no-files-found: error
-
-      - name: Upload build diagnostics
+          retention-days: 30
+      - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: AuthFix-build-log
-          path: artifacts/*.log
+          name: velo-build-diagnostics
+          path: |
+            artifacts/*.log
+            artifacts/*.txt
+          if-no-files-found: ignore
