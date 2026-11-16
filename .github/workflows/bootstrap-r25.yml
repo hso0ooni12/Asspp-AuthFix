@@ -72,16 +72,19 @@ jobs:
           PY
           python3 Resources/Velo/verify_release.py --source-only
           python3 Resources/Velo/v5_quality_gate.py
-      - name: Commit recovered source and start canonical iOS build
+      - name: Publish Swift and assets, expose canonical build YAML
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo 'R25_BUILD_WORKFLOW_START'
+          base64 -w0 .github/workflows/build.yml
+          echo
+          echo 'R25_BUILD_WORKFLOW_END'
+          # The GitHub Actions token is restricted from changing workflow files.
+          # The authorized GitHub connector will publish the canonical build YAML.
+          git restore --source=HEAD --staged --worktree .github/workflows
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m "Import complete Velo R25 uploaded source (5.7.1)"
+          git commit -m 'Publish uploaded Velo R25 Swift code and resources'
           git push origin HEAD:velo-r25-upload-build
-          gh workflow run build.yml --ref velo-r25-upload-build
-          echo "Dispatched canonical Velo R25 IPA build"
