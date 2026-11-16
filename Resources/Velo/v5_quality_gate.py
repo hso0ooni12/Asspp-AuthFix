@@ -196,8 +196,8 @@ def test_public_beta_reliability_and_import():
     assert "AuthenticationRecovery.isMissingEndpoint(status)" in auth
     recovery = source("Resources/AuthFix/AuthenticationRecovery.swift")
     assert "maximumSends = 6" in recovery
-    workflow = source(".github/workflows/velo-5-ipa.yml")
-    assert "Restore and save Xcode compiled build outputs" in workflow
+    workflow = source(".github/workflows/build.yml")
+    assert "Restore incremental Xcode outputs" in workflow
     assert ".build-authfix/DerivedData/Build/Intermediates.noindex" in workflow
 
 
@@ -222,7 +222,7 @@ def test_resilient_get_and_history_56():
     archived = source("Asspp/Backend/AppStore/AppPackageArchive.swift")
     assert "refreshVersionHistory(" in archived
     assert "self.versionIdentifiers = (Array(versions.reversed()) + self.versionIdentifiers)" in archived
-    assert "self.unavailableVersionIDs.formUnion(self.versionIdentifiers)" in archived
+    assert "unavailableVersionIDs.formUnion(versionIdentifiers)" in archived
     history = source("Asspp/Interface/Search/ProductHistoryView.swift")
     assert "vm.refreshVersionHistory" in history
     assert "vm.clearVersionItems()" not in history
@@ -237,7 +237,7 @@ def test_verified_versions_and_ticket_recovery_57():
     protocol = source("Asspp/Backend/AppStore/StoreDownloadProtocol.swift")
     archive = source("Asspp/Backend/AppStore/AppPackageArchive.swift")
     ui = source("Asspp/Interface/Search/ProductHistoryView.swift")
-    workflow = source(".github/workflows/velo-5-ipa.yml")
+    workflow = source(".github/workflows/build.yml")
     builder = source("Resources/AuthFix/build.sh")
     assert "private enum RemoteIPAInfoPlist" in service
     assert "versionMetadataFromAsset" in service and "versionAsset(" in service
@@ -251,7 +251,7 @@ def test_verified_versions_and_ticket_recovery_57():
     assert "Version ID" not in ui and 'Text(verified.displayVersion)' in ui
     assert "volumeStore-invalid-package" in protocol
     assert 'StoreDownloadProtocol.fallbackReason(ticket) == nil' in service
-    assert "restore-keys:" in workflow and "velo-57-xcode-" in workflow
+    assert "restore-keys:" in workflow and "velo-xcode-" in workflow
     assert "SWIFT_COMPILATION_MODE=singlefile" in builder
     assert "build-timings.txt" in builder
 

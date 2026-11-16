@@ -7,9 +7,28 @@ import plistlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "5.7.1"
-BUILD = "2026111206"
-IPA_NAME = "Velo-5.7.1-HistoryFix-unsigned.ipa"
+
+
+def _read_version() -> "tuple[str, str]":
+    """Configuration/Version.xcconfig is the only place a version is defined.
+
+    Hardcoding the numbers here meant every release had to edit both this file
+    and the build script, and a missed edit produced a fully built IPA that
+    failed metadata verification. Read the single source instead.
+    """
+    values = {}
+    config = (ROOT / "Configuration/Version.xcconfig").read_text().splitlines()
+    for line in config:
+        line = line.split("//")[0].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values["MARKETING_VERSION"], values["CURRENT_PROJECT_VERSION"]
+
+
+VERSION, BUILD = _read_version()
+IPA_NAME = f"Velo-{VERSION}-unsigned.ipa"
 
 def validate_sources():
     store = (ROOT / "Asspp/Backend/AppStore/AppStore.swift").read_text()

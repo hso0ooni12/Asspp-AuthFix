@@ -263,7 +263,10 @@ class Downloads {
                             self.releaseTransferSlot(request.id)
                             self.refreshRunningTaskCount()
                             Task { @MainActor in
-                                try? await Task.sleep(for: .milliseconds(retry * 700))
+                                // Resumes from the bytes already on disk; the
+                                // delay only prevents hammering a flapping host.
+                                try? await Task.sleep(nanoseconds:
+                                    DownloadTransferRetryPolicy.retryDelayNanoseconds(for: retry - 1))
                                 guard self.manifests.contains(where: { $0.id == request.id }),
                                       request.state.status == .pending else { return }
                                 self.resume(request: request)

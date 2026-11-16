@@ -172,6 +172,10 @@ struct ProductHistoryView: View {
                 !(newValue?.contains("HTTP 403") ?? false)
         }
         .onAppear {
+            // Verified labels are account-independent, so paint whatever was
+            // already resolved before starting a refresh. The list is readable
+            // immediately instead of showing "Verifying…" for every row.
+            vm.hydrateCachedLabels()
             if vm.versionIdentifiers.isEmpty {
                 vm.populateVersionIdentifiers {
                     await MainActor.run { vm.populateNextVersionItems() }

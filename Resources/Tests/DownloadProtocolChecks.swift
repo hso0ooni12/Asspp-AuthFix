@@ -70,10 +70,23 @@ struct DownloadProtocolChecks {
             NSError(domain: NSPOSIXErrorDomain, code: 54), completedRetries: 1))
         precondition(!StoreDownloadProtocol.shouldRetryPreparation(
             StoreDownloadError.response(403), completedRetries: 0))
-        precondition(!StoreDownloadProtocol.shouldRetryPreparation(
+        // The transient budget was raised so a recoverable Apple hiccup is
+        // absorbed instead of surfacing as "tap GET again".
+        precondition(StoreDownloadProtocol.shouldRetryPreparation(
             StoreDownloadError.response(503), completedRetries: 2))
-        precondition(StoreDownloadProtocol.preparationRetryDelayNanoseconds(0) == 1_000_000_000)
-        precondition(StoreDownloadProtocol.preparationRetryDelayNanoseconds(1) == 2_000_000_000)
+        precondition(StoreDownloadProtocol.shouldRetryPreparation(
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut), completedRetries: 3))
+        precondition(!StoreDownloadProtocol.shouldRetryPreparation(
+            StoreDownloadError.response(503),
+            completedRetries: StoreDownloadProtocol.maximumPreparationRetries))
+        // Backoff is jittered, so assert the envelope rather than an exact value.
+        for attempt in 0 ... 4 {
+            let delay = StoreDownloadProtocol.preparationRetryDelayNanoseconds(attempt)
+            precondition(delay >= 400_000_000, "backoff floor missing at attempt \(attempt)")
+            precondition(delay <= 12_000_000_000, "backoff ceiling exceeded at attempt \(attempt)")
+        }
+        precondition(StoreDownloadProtocol.preparationRetryDelayNanoseconds(0)
+            <= StoreDownloadProtocol.preparationRetryDelayNanoseconds(5))
         precondition(!StoreDownloadProtocol.isTransientHTTPStatus(403))
         precondition(!StoreDownloadProtocol.isTransientNetworkError(
             NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)))
@@ -81,8 +94,17 @@ struct DownloadProtocolChecks {
             NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost)))
         precondition(DownloadTransferRetryPolicy.shouldRetry(
             error: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut), previousRetries: 1))
-        precondition(!DownloadTransferRetryPolicy.shouldRetry(
+        precondition(DownloadTransferRetryPolicy.shouldRetry(
             error: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut), previousRetries: 2))
+        precondition(DownloadTransferRetryPolicy.shouldRetry(
+            error: NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost),
+            previousRetries: DownloadTransferRetryPolicy.maximumAutomaticRetries - 1))
+        precondition(!DownloadTransferRetryPolicy.shouldRetry(
+            error: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut),
+            previousRetries: DownloadTransferRetryPolicy.maximumAutomaticRetries))
+        // A user cancellation and a rejected authorization are never retried.
+        precondition(!DownloadTransferRetryPolicy.shouldRetry(
+            error: NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled), previousRetries: 0))
         precondition(DownloadTransferRetryPolicy.shouldRetry(
             error: NSError(domain: "DiggerErrorDomain", code: 1, userInfo: ["statusCode": 503]), previousRetries: 0))
         precondition(!DownloadTransferRetryPolicy.shouldRetry(
@@ -92,9 +114,32 @@ struct DownloadProtocolChecks {
             "softwareVersionExternalIdentifiers": [123, "124", 123, "bad"],
         ]])
         precondition(historical == ["123", "124"])
-        precondition(StoreDownloadProtocol.historyDisplayVersion(metadata: [:], externalID: "123") == "ID 123")
+        // An unverifiable build must never fall back to rendering the opaque
+        // Apple build identifier as a version number.
+        precondition(StoreDownloadProtocol.historyDisplayVersion(metadata: [:], externalID: "123").isEmpty)
+        precondition(StoreDownloadProtocol.historyDisplayVersion(metadata: [:], externalID: "863927451").isEmpty)
         precondition(StoreDownloadProtocol.historyDisplayVersion(
             metadata: ["bundleShortVersionString": " 1.2.3 "], externalID: "123") == "1.2.3")
+        precondition(StoreDownloadProtocol.historyDisplayVersion(
+            metadata: ["bundleShortVersionString": "6.2.0"], externalID: "849102385") == "6.2.0")
+
+        // A build identifier must never be presented as a version number, in
+        // any code path: not when it is the only value available, and not if it
+        // somehow arrives inside a metadata dictionary.
+        precondition(VersionLabelStore.looksLikeBuildIdentifier("863927451"))
+        precondition(VersionLabelStore.looksLikeBuildIdentifier("849102385"))
+        precondition(VersionLabelStore.looksLikeBuildIdentifier(""))
+        precondition(!VersionLabelStore.looksLikeBuildIdentifier("27"))
+        precondition(!VersionLabelStore.looksLikeBuildIdentifier("27.4"))
+        precondition(!VersionLabelStore.looksLikeBuildIdentifier("5.7.1"))
+        precondition(!VersionLabelStore.looksLikeBuildIdentifier("2024.10"))
+        precondition(StoreDownloadProtocol.historyDisplayVersion(
+            metadata: ["bundleShortVersionString": "863927451"], externalID: "863927451").isEmpty)
+
+        // The cache key must separate platforms and accounts are irrelevant, so
+        // a tvOS identifier can never paint an iOS row.
+        precondition(VersionLabelStore.identifier(appID: 1, platform: "iPhone", externalVersionID: "2")
+            != VersionLabelStore.identifier(appID: 1, platform: "appleTV", externalVersionID: "2"))
 
         // Preserve historical IDs on both endpoints; numeric 5002 is retryable.
         requests = []

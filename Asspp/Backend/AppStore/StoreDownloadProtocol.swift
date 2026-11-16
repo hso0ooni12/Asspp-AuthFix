@@ -67,7 +67,7 @@ enum StoreDownloadProtocol {
 
     /// Retry only safe metadata/ticket reads. Never replay a purchase,
     /// verification challenge, or authorization denial (HTTP 403).
-    static let maximumPreparationRetries = 2
+    static let maximumPreparationRetries = 4
 
     static func shouldRetryPreparation(_ error: Error, completedRetries: Int) -> Bool {
         guard completedRetries < maximumPreparationRetries else { return false }
@@ -79,8 +79,22 @@ enum StoreDownloadProtocol {
         return false
     }
 
+    /// Exponential backoff with full jitter.
+    ///
+    /// A fixed delay makes every client that failed at the same moment retry at
+    /// the same moment, which is exactly how a brief Apple hiccup turns into a
+    /// sustained rejection. Jitter spreads the retries; the floor stops a
+    /// hot loop of 40 ms attempts.
+    static func jitteredBackoffNanoseconds(attempt: Int, base: Double = 0.8, cap: Double = 15) -> UInt64 {
+        let exponent = Double(min(max(attempt, 0), 8))
+        let ceiling = min(cap, base * pow(2, exponent))
+        let floor = ceiling / 2
+        let seconds = Double.random(in: floor ... ceiling)
+        return UInt64(seconds * 1_000_000_000)
+    }
+
     static func preparationRetryDelayNanoseconds(_ completedRetries: Int) -> UInt64 {
-        UInt64(1 << min(max(completedRetries, 0), 1)) * 1_000_000_000
+        jitteredBackoffNanoseconds(attempt: completedRetries, base: 0.8, cap: 12)
     }
 
     static func historyIdentifiers(from item: [String: Any]) throws -> [String] {
@@ -94,10 +108,18 @@ enum StoreDownloadProtocol {
         return versions
     }
 
+    /// The display label for one historical build.
+    ///
+    /// Apple's history endpoint returns opaque build identifiers. Returning
+    /// "ID 863927451" here used to surface those identifiers as if they were
+    /// version numbers anywhere this helper was used. A label that cannot be
+    /// verified is reported as empty so callers render an explicit
+    /// "unavailable" state and keep the identifier for internal use only.
     static func historyDisplayVersion(metadata: [String: Any], externalID: String) -> String {
         let version = (metadata["bundleShortVersionString"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return version.isEmpty ? "ID \(externalID)" : version
+        guard !version.isEmpty, !VersionLabelStore.looksLikeBuildIdentifier(version) else { return "" }
+        return version
     }
 
     static func isMainInfoPlist(_ path: String) -> Bool {
@@ -336,15 +358,27 @@ enum StoreDownloadProtocol {
 /// Byte-transfer retries are separate from Apple account/license work. Digger
 /// can resume an incomplete IPA using HTTP Range on the same signed asset URL.
 enum DownloadTransferRetryPolicy {
-    static let maximumAutomaticRetries = 2
+    /// A signed asset URL stays valid long enough to absorb a short outage, and
+    /// every retry resumes from the bytes already on disk, so the tolerated
+    /// budget can be larger than a metadata request's.
+    static let maximumAutomaticRetries = 4
 
     static func shouldRetry(error: Error, previousRetries: Int) -> Bool {
         guard previousRetries < maximumAutomaticRetries else { return false }
-        if StoreDownloadProtocol.isTransientNetworkError(error) { return true }
+        // A user cancellation must never come back to life on its own.
         let failure = error as NSError
+        if failure.domain == NSURLErrorDomain, failure.code == NSURLErrorCancelled {
+            return false
+        }
+        if error is CancellationError { return false }
+        if StoreDownloadProtocol.isTransientNetworkError(error) { return true }
         if let status = failure.userInfo["statusCode"] as? Int {
             return StoreDownloadProtocol.isTransientHTTPStatus(status)
         }
         return false
+    }
+
+    static func retryDelayNanoseconds(for previousRetries: Int) -> UInt64 {
+        StoreDownloadProtocol.jitteredBackoffNanoseconds(attempt: previousRetries, base: 1, cap: 20)
     }
 }

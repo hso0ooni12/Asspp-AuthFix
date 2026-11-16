@@ -3,6 +3,20 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 python3 Resources/AuthFix/prepare.py
 
+# Single source of truth for the shipped version. Workflows used to rewrite
+# build.sh with `sed` before every run, so a forgotten substitution meant a
+# 20-minute build that failed at the very last verification step. The version
+# now lives only in Configuration/Version.xcconfig.
+VERSION_XCCONFIG="Configuration/Version.xcconfig"
+MARKETING_VERSION="$(sed -n 's/^[[:space:]]*MARKETING_VERSION[[:space:]]*=[[:space:]]*\(.*\)$/\1/p' "$VERSION_XCCONFIG" | tail -1 | tr -d '[:space:]')"
+CURRENT_PROJECT_VERSION="$(sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION[[:space:]]*=[[:space:]]*\(.*\)$/\1/p' "$VERSION_XCCONFIG" | tail -1 | tr -d '[:space:]')"
+if [[ -z "$MARKETING_VERSION" || -z "$CURRENT_PROJECT_VERSION" ]]; then
+  echo '::error::Configuration/Version.xcconfig must define MARKETING_VERSION and CURRENT_PROJECT_VERSION'
+  exit 1
+fi
+export MARKETING_VERSION CURRENT_PROJECT_VERSION
+echo "Building Velo ${MARKETING_VERSION} (${CURRENT_PROJECT_VERSION})"
+
 mkdir -p artifacts .build-authfix
 # SwiftPM also resolves GitHub-hosted binary dependencies during this test.
 # A transient 504 here must be retried before the Xcode build is reached.
@@ -91,7 +105,7 @@ xcodebuild -workspace Asspp.xcworkspace -scheme Asspp -configuration Release \
   -derivedDataPath .build-authfix/DerivedData \
   -clonedSourcePackagesDirPath .build-authfix/SourcePackages \
   DEVELOPMENT_TEAM= CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
-  CODE_SIGN_ENTITLEMENTS= MARKETING_VERSION=4.2.7 CURRENT_PROJECT_VERSION=2026110705 \
+  CODE_SIGN_ENTITLEMENTS= MARKETING_VERSION="$MARKETING_VERSION" CURRENT_PROJECT_VERSION="$CURRENT_PROJECT_VERSION" \
   PRODUCT_BUNDLE_IDENTIFIER=wiki.qaq.Asspp.AuthFix \
   INFOPLIST_KEY_CFBundleDisplayName='Velo' INFOPLIST_KEY_CFBundleName='Velo' \
   SWIFT_COMPILATION_MODE=singlefile COMPILER_INDEX_STORE_ENABLE=NO \
@@ -128,7 +142,8 @@ app = root / '.build-authfix/DerivedData/Build/Products/Release-iphoneos/Asspp.a
 if not app.is_dir():
     raise SystemExit('Expected iPhoneOS app was not built')
 info = plistlib.loads((app / 'Info.plist').read_bytes())
-expected = {'CFBundleShortVersionString': '4.2.7', 'CFBundleVersion': '2026110705', 'CFBundleIdentifier': 'wiki.qaq.Asspp.AuthFix'}
+import os
+expected = {'CFBundleShortVersionString': os.environ['MARKETING_VERSION'], 'CFBundleVersion': os.environ['CURRENT_PROJECT_VERSION'], 'CFBundleIdentifier': 'wiki.qaq.Asspp.AuthFix'}
 for key, value in expected.items():
     if info.get(key) != value:
         raise SystemExit(f'Incorrect build metadata: {key}')
