@@ -15,9 +15,20 @@ enum StoreDownloadService {
         }
     }
 
-    static func download(account: inout Account, package: AppStore.AppPackage) async throws -> DownloadOutput {
+    // The session and catalog result live for a single GET action and its license checks.
+    final class DownloadAttempt {
+        fileprivate let session = StoreDownloadService.makeSession()
+        fileprivate var catalogVersion: String?
+        fileprivate var legacyReportedMissingLicense = false
+
+        deinit { session.invalidateAndCancel() }
+    }
+
+    static func download(account: inout Account, package: AppStore.AppPackage,
+                         attempt: DownloadAttempt) async throws -> DownloadOutput {
         let email = account.email
-        return try await product(account: &account, package: package, version: package.externalVersionID, operation: "download") { item in
+        return try await product(account: &account, package: package, version: package.externalVersionID,
+                                 operation: "download", attempt: attempt) { item in
             try await output(item: item, email: email, bundleID: package.software.bundleID)
         }
     }
@@ -93,17 +104,12 @@ enum StoreDownloadService {
         }
     }
 
-    static func versionMetadataFromAsset(_ url: URL, bundleID: String) async throws -> VersionMetadata {
-        let info = try await RemoteIPAInfoPlist.read(url: url, bundleID: bundleID)
+    static func versionMetadataFromAsset(_ url: URL, bundleID: String, platform: String) async throws -> VersionMetadata {
+        let info = try await RemoteIPAInfoPlist.read(url: url, bundleID: bundleID, platform: platform)
         return VersionMetadata(displayVersion: info.version, releaseDate: info.date)
     }
 
-    private static func product<Result>(account: inout Account, package: AppStore.AppPackage, version: String?, operation: String, parse: ([String: Any]) async throws -> Result) async throws -> Result {
-        let trace = String(UUID().uuidString.prefix(8))
-        let app = package.software
-        let version = version.flatMap { $0.isEmpty ? nil : $0 }
-        let platform = package.entityType ?? .iPhone
-        logger.info("Store download [\(trace)]: operation=\(operation) app=\(app.id) platform=\(platform.rawValue) store=\(account.store) version=\(version ?? "latest")")
+    private static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
@@ -111,10 +117,43 @@ enum StoreDownloadService {
         configuration.urlCache = nil
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 60
-        let session = URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
+        return URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
+    }
+
+    private static func product<Result>(account: inout Account, package: AppStore.AppPackage,
+                                        version: String?, operation: String, attempt: DownloadAttempt? = nil,
+                                        parse: ([String: Any]) async throws -> Result) async throws -> Result {
+        let trace = String(UUID().uuidString.prefix(8))
+        let app = package.software
+        let version = version.flatMap { $0.isEmpty ? nil : $0 }
+        let requiresExactVersion = operation == "download" && version != nil
+        let platform = package.entityType ?? .iPhone
+        logger.info("Store download [\(trace)]: operation=\(operation) app=\(app.id) platform=\(platform.rawValue) store=\(account.store) version=\(version ?? "latest")")
+        let session = attempt?.session ?? makeSession()
+        defer { if attempt == nil { session.invalidateAndCancel() } }
+        let region = Configuration.countryCode(for: account.store)
+        var resolvedCatalogVersion = attempt?.catalogVersion
+
+        func latestCatalogVersion() async throws -> String {
+            if let resolvedCatalogVersion { return resolvedCatalogVersion }
+            guard let region else { throw StoreDownloadError.catalogUnavailable }
+            let metadata: StoreDownloadProtocol.CatalogVersion
+            do {
+                metadata = try await catalogVersion(session: session, appID: app.id, region: region,
+                                                    platform: platform, trace: trace)
+            } catch {
+                try Task.checkCancellation()
+                throw StoreDownloadError.catalogUnavailable
+            }
+            guard !metadata.externalVersionID.isEmpty,
+                  metadata.bundleID == nil || metadata.bundleID == app.bundleID
+            else { throw StoreDownloadError.catalogUnavailable }
+            resolvedCatalogVersion = metadata.externalVersionID
+            attempt?.catalogVersion = metadata.externalVersionID
+            return metadata.externalVersionID
+        }
+
         do {
-            let region = Configuration.countryCode(for: account.store)
             var effectiveVersion = version
             // Only the in-memory route decision uses this identity. Never log
             // or persist a DSID, cookie, password token, or signed IPA URL.
@@ -123,7 +162,7 @@ enum StoreDownloadService {
             let modernHistoryOnly = operation == "versions-modern"
             if modernHistoryOnly {
                 tryPreferred = true
-            } else if operation == "download" {
+            } else if operation == "download", attempt?.legacyReportedMissingLicense != true {
                 tryPreferred = await DownloadRouteAdvisor.shared.shouldTryPreferred(scope: routeScope)
             } else {
                 tryPreferred = false
@@ -140,18 +179,14 @@ enum StoreDownloadService {
                     if let version {
                         preferredVersion = version
                     } else {
-                        guard let region else { throw StoreDownloadError.catalogUnavailable }
-                        let metadata = try await catalogVersion(session: session, appID: app.id,
-                                                                region: region, platform: platform, trace: trace)
-                        guard metadata.bundleID == nil || metadata.bundleID == app.bundleID else {
-                            throw StoreDownloadError.catalogUnavailable
-                        }
-                        preferredVersion = metadata.externalVersionID
+                        preferredVersion = try await latestCatalogVersion()
                     }
                     reachedPreferredTransport = true
                     preferredResponse = try await fetchPreferred(session: session, account: &account,
                                                                   appID: app.id, bundleID: app.bundleID,
-                                                                  version: preferredVersion, trace: trace)
+                                                                  version: preferredVersion,
+                                                                  requiresExactVersion: requiresExactVersion,
+                                                                  trace: trace)
                     effectiveVersion = preferredVersion
                 } catch {
                     try Task.checkCancellation()
@@ -173,13 +208,14 @@ enum StoreDownloadService {
                                                  account: &account, appID: app.id,
                                                  version: requestedVersion, trace: trace)
                     if operation == "download",
-                       StoreDownloadProtocol.failureCode(ticket) != "9610",
+                       !StoreDownloadProtocol.isLicenseRequired(ticket),
                        StoreDownloadProtocol.fallbackReason(ticket) == nil {
                         // An HTTP 200 may still contain a mismatched app or
                         // incomplete songList. Trigger the one-time independent
                         // endpoint fallback instead of surfacing a dead-end.
                         let item = try StoreDownloadProtocol.packageItem(
-                            ticket, bundleID: app.bundleID, version: requestedVersion)
+                            ticket, bundleID: app.bundleID, version: requestedVersion,
+                            requiresExactVersion: requiresExactVersion)
                         // A ticket without a signed IPA URL or valid SINF list
                         // should trigger the independent endpoint fallback.
                         guard let address = item["URL"] as? String,
@@ -192,29 +228,19 @@ enum StoreDownloadService {
                     return ticket
                 } resolveVersion: {
                     // An unpinned redownload can return a tvOS build for an iOS app.
-                    guard let region else { throw StoreDownloadError.catalogUnavailable }
-                    let metadata: StoreDownloadProtocol.CatalogVersion
-                    do {
-                        metadata = try await catalogVersion(session: session, appID: app.id, region: region,
-                                                            platform: platform, trace: trace)
-                    } catch {
-                        try Task.checkCancellation()
-                        throw StoreDownloadError.catalogUnavailable
-                    }
-                    guard !metadata.externalVersionID.isEmpty,
-                          metadata.bundleID == nil || metadata.bundleID == app.bundleID
-                    else { throw StoreDownloadError.catalogUnavailable }
-                    logger.info("Store download [\(trace)]: catalog version=\(metadata.externalVersionID)")
-                    return metadata.externalVersionID
+                    try await latestCatalogVersion()
                 } onFallback: { reason in
                     logger.info("Store download [\(trace)]: trying \(reason.hasPrefix("redownload-") ? "update" : "redownload"), reason=\(reason)")
                 }
             }
             // Surface license-missing to the one-tap download coordinator.
-            if StoreDownloadProtocol.failureCode(response) == "9610" {
+            if StoreDownloadProtocol.isLicenseRequired(response) {
+                attempt?.legacyReportedMissingLicense = preferredResponse == nil
                 throw ApplePackageError.licenseRequired
             }
-            let item = try StoreDownloadProtocol.packageItem(response, bundleID: app.bundleID, version: effectiveVersion)
+            let item = try StoreDownloadProtocol.packageItem(
+                response, bundleID: app.bundleID, version: effectiveVersion,
+                requiresExactVersion: requiresExactVersion)
             let result = try await parse(item)
             if operation == "download" {
                 if preferredResponse != nil {
@@ -321,7 +347,8 @@ enum StoreDownloadService {
             if let plist {
                 logger.info("Store download [\(trace)]: \(StoreDownloadProtocol.summary(plist))")
             }
-            guard response.statusCode == 200, let plist else {
+            guard let plist, response.statusCode == 200 ||
+                StoreDownloadProtocol.isLicenseRequired(plist, httpStatus: response.statusCode) else {
                 if data.isEmpty {
                     throw StoreDownloadError.emptyResponse(response.statusCode)
                 }
@@ -335,7 +362,8 @@ enum StoreDownloadService {
     /// Preferred R3 request. No redirects are followed because X-Token must never
     /// be sent to a different destination. Only the fixed Apple endpoint is used.
     private static func fetchPreferred(session: URLSession, account: inout Account, appID: Int64,
-                                       bundleID: String, version: String, trace: String) async throws -> [String: Any]
+                                       bundleID: String, version: String, requiresExactVersion: Bool,
+                                       trace: String) async throws -> [String: Any]
     {
         let guid = Configuration.deviceIdentifier
         let dsid = account.directoryServicesIdentifier
@@ -391,10 +419,16 @@ enum StoreDownloadService {
         guard let response = response as? HTTPURLResponse else { throw StoreDownloadError.response(0) }
         logger.info("Store download [\(trace)]: endpoint=ent/download HTTP=\(response.statusCode) bytes=\(data.count)")
         // No re-POST on redirects, ever. Responses are validated before use.
-        guard response.statusCode == 200, let plist = StoreProtocol.plist(data)
+        guard let plist = StoreProtocol.plist(data), response.statusCode == 200 ||
+            StoreDownloadProtocol.isLicenseRequired(plist, httpStatus: response.statusCode)
         else { throw StoreDownloadError.response(response.statusCode) }
         logger.info("Store download [\(trace)]: \(StoreDownloadProtocol.summary(plist))")
-        let item = try StoreDownloadProtocol.packageItem(plist, bundleID: bundleID, version: version)
+        if StoreDownloadProtocol.isLicenseRequired(plist) {
+            mergeCookies(response: response, url: url, account: &account)
+            return plist
+        }
+        let item = try StoreDownloadProtocol.packageItem(
+            plist, bundleID: bundleID, version: version, requiresExactVersion: requiresExactVersion)
         guard let urlText = item["URL"] as? String, !urlText.isEmpty,
               let signatures = item["sinfs"] as? [[String: Any]], !signatures.isEmpty
         else { throw StoreDownloadError.invalidPackage }
@@ -499,7 +533,7 @@ private enum RemoteIPAInfoPlist {
         }
     }
 
-    static func read(url: URL, bundleID: String) async throws -> Details {
+    static func read(url: URL, bundleID: String, platform: String) async throws -> Details {
         guard url.scheme == "https", url.host != nil else { throw Failure.restricted }
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 12
@@ -568,8 +602,8 @@ private enum RemoteIPAInfoPlist {
                 let info = try unpackSingleFile(name: name, method: method,
                     time: time, date: date, crc: crc,
                     body: body, expanded: expanded)
-                guard info["CFBundleIdentifier"] as? String == bundleID,
-                      let version = info["CFBundleShortVersionString"] as? String,
+                try StoreDownloadProtocol.validatePackageInfo(info, bundleID: bundleID, platform: platform)
+                guard let version = info["CFBundleShortVersionString"] as? String,
                       !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       let build = info["CFBundleVersion"] as? String, !build.isEmpty
                 else { throw Failure.unverified }

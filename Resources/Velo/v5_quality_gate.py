@@ -204,8 +204,10 @@ def test_public_beta_reliability_and_import():
 def test_resilient_get_and_history_56():
     coordinator = source("Asspp/Backend/Downloader/Downloads+UI.swift")
     assert "prepareTicketWithRetries(" in coordinator
-    assert "verifyLicenseAfterInterruption(" in coordinator
-    assert "repeat ONLY safe ticket reads" in coordinator
+    assert "verifyFreeLicense(" in coordinator
+    verification = coordinator.split("private func verifyFreeLicense(", 1)[1]
+    assert "FreeLicensePolicy.verificationDelays" in verification
+    assert "StoreDownloadService.download" in verification and "ApplePackage.Purchase.purchase" not in verification
     assert "maximumPreparationRetries" in coordinator
     assert "case retrying" in coordinator and "case verifyingFreeLicense" in coordinator
     assert "ApplePackage.Purchase.purchase" in coordinator
@@ -222,7 +224,8 @@ def test_resilient_get_and_history_56():
     archived = source("Asspp/Backend/AppStore/AppPackageArchive.swift")
     assert "refreshVersionHistory(" in archived
     assert "self.versionIdentifiers = (Array(versions.reversed()) + self.versionIdentifiers)" in archived
-    assert "self.unavailableVersionIDs.formUnion(self.versionIdentifiers)" in archived
+    assert "StoreDownloadProtocol.historyBatch" in archived
+    assert "unavailableVersionIDs.formUnion" not in archived
     history = source("Asspp/Interface/Search/ProductHistoryView.swift")
     assert "vm.refreshVersionHistory" in history
     assert "vm.clearVersionItems()" not in history
@@ -243,10 +246,10 @@ def test_verified_versions_and_ticket_recovery_57():
     assert "versionMetadataFromAsset" in service and "versionAsset(" in service
     assert "session.bytes(for: request)" in service and "http.statusCode == 206" in service
     assert "16_777_216" in service and "2_097_152" in service
-    assert "CFBundleShortVersionString" in service and "CFBundleIdentifier" in service
+    assert "CFBundleShortVersionString" in service and "StoreDownloadProtocol.validatePackageInfo" in service
     assert "BundleID" not in archive or "ipaVerifiedVersionsV2" in archive
     assert "ipaVerifiedVersionsV2" in archive
-    assert "Version ID" not in ui and 'Text(verified.displayVersion)' in ui
+    assert "Version ID" not in ui and 'Text(version.displayVersion)' in ui
     assert "volumeStore-invalid-package" in protocol
     assert 'StoreDownloadProtocol.fallbackReason(ticket) == nil' in service
     assert "restore-keys:" in workflow and "velo-57-xcode-" in workflow

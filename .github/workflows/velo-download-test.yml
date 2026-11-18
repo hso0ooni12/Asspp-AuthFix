@@ -1,0 +1,165 @@
+name: Velo 5.7.2 Download Test
+
+on:
+  push:
+    branches: [velo-5-7-2-download-test]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: velo-download-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-ipa:
+    runs-on: macos-26-intel
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.0"
+      - name: Select Xcode and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          best_path=""
+          best_ver=""
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            case "$app" in *beta*|*Beta*|*_RC*) continue ;; esac
+            ver=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null || true)
+            [ -n "$ver" ] || continue
+            if [ -z "$best_ver" ] || [ "$(printf '%s\n%s\n' "$best_ver" "$ver" | sort -V | tail -1)" = "$ver" ]; then
+              best_ver="$ver"
+              best_path="$app"
+            fi
+          done
+          [ -n "$best_path" ] || { echo 'No Xcode found'; exit 1; }
+          sudo xcode-select -s "$best_path"
+          xcodebuild -version
+          command -v xcbeautify >/dev/null || brew install xcbeautify
+      - name: Verify download and version handling
+        run: bash Resources/Scripts/check.downloads.sh
+      - name: Restore download transport libraries
+        id: native_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ci-cache/libR3KBSync.a
+            .ci-cache/libunicorn.a
+          key: velo-download-test-intel-${{ hashFiles('Resources/R3/KBSyncBridge/main.go', 'Resources/Velo/unicorn-ios-int128.patch') }}
+      - name: Build pinned iOS arm64 KBSync bridge
+        if: steps.native_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream="${RUNNER_TEMP}/ipatool-upstream"
+          git clone --depth 1 --branch v2.7.0 https://github.com/majd/ipatool.git "$upstream"
+          mkdir -p "$upstream/cmd/r3bridge"
+          cp Resources/R3/KBSyncBridge/main.go "$upstream/cmd/r3bridge/main.go"
+          cd "$upstream"
+          export GOOS=ios GOARCH=arm64 CGO_ENABLED=1
+          export SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
+          export CC="$(xcrun --sdk iphoneos --find clang)"
+          # Host clang defaults to x86_64 on Intel runners. Explicitly target
+          # iOS arm64 for both cgo compilation and its final link step.
+          export CGO_CFLAGS="-target arm64-apple-ios17.0 -isysroot ${SDKROOT}"
+          export CGO_LDFLAGS="-target arm64-apple-ios17.0 -isysroot ${SDKROOT}"
+          mkdir -p "${GITHUB_WORKSPACE}/.ci-cache"
+          go build -trimpath -buildmode=c-archive -o "${GITHUB_WORKSPACE}/.ci-cache/libR3KBSync.a" ./cmd/r3bridge
+          test -s "${GITHUB_WORKSPACE}/.ci-cache/libR3KBSync.a"
+      - name: Build pinned Unicorn TCI no-JIT static library for iOS
+        if: steps.native_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v cmake >/dev/null || brew install cmake
+          checkout="${RUNNER_TEMP}/unicorn-tci-source"
+          git clone --depth 1 https://github.com/1rhino2/unicorn-tci.git "${checkout}"
+          git -C "${checkout}" fetch --depth 1 origin e3f075a62742913bb734a55a474aec65c9e5745e
+          git -C "${checkout}" checkout --detach e3f075a62742913bb734a55a474aec65c9e5745e
+          # Apple's SDK already defines __int128_t, and iOS needs POSIX mmap
+          # declarations even when QEMU's configure script was not run.
+          git -C "${checkout}" apply --check "${GITHUB_WORKSPACE}/Resources/Velo/unicorn-ios-int128.patch"
+          git -C "${checkout}" apply "${GITHUB_WORKSPACE}/Resources/Velo/unicorn-ios-int128.patch"
+          ios_sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          ARCHFLAGS="-arch arm64" cmake \
+            -S "${checkout}/unicorn-engine-sys-tci" -B "${RUNNER_TEMP}/r6-tci-build" \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="${ios_sdk}" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+            -DCMAKE_C_FLAGS="-target arm64-apple-ios17.0 -DCONFIG_POSIX_MEMALIGN" \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+            -DUNICORN_ARCH=x86 -DUNICORN_BUILD_TESTS=OFF -DUNICORN_INSTALL=OFF \
+            -DUNICORN_INTERPRETER=ON
+          grep -E "^UNICORN_INTERPRETER:BOOL=ON$" "${RUNNER_TEMP}/r6-tci-build/CMakeCache.txt"
+          if [ ! -s "${RUNNER_TEMP}/r6-tci-build/x86_64-softmmu/config-target.h" ]; then
+            echo "::error::Pinned Unicorn configure did not generate x86_64-softmmu/config-target.h"
+            if [ -f "${RUNNER_TEMP}/r6-tci-build/config.log" ]; then
+              tail -100 "${RUNNER_TEMP}/r6-tci-build/config.log"
+            fi
+            exit 1
+          fi
+          cmake --build "${RUNNER_TEMP}/r6-tci-build" --parallel "$(sysctl -n hw.ncpu)"
+          archive="${RUNNER_TEMP}/r6-tci-build/libunicorn.a"
+          test -s "${archive}"
+          xcrun nm -g "${archive}" > "${RUNNER_TEMP}/r6-tci-exports.txt"
+          grep -F " _uc_version" "${RUNNER_TEMP}/r6-tci-exports.txt" > /dev/null
+          grep -F " _uc_emu_start" "${RUNNER_TEMP}/r6-tci-exports.txt" > /dev/null
+          mkdir -p .ci-cache
+          cp "${archive}" .ci-cache/libunicorn.a
+      - name: Generate modern Velo app icon in every required size
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift Resources/Velo/make_icon.swift "${RUNNER_TEMP}/VeloIcon.png"
+          src="${RUNNER_TEMP}/VeloIcon.png"
+          icons="Asspp/App/Assets.xcassets/AppIcon.appiconset"
+          test -s "$src"
+          for name in asspp.png asspp_dark.png asspp_tinted.png asspp_appstore.png; do
+            sips -s format png -z 1024 1024 "$src" --out "$icons/$name" >/dev/null
+          done
+          for size in 16 32 64 128 256 512; do
+            sips -s format png -z "$size" "$size" "$src" --out "$icons/asspp_${size}.png" >/dev/null
+          done
+      - name: Build unsigned test IPA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          R3_KBSYNC_ARCHIVE: ${{ github.workspace }}/.ci-cache/libR3KBSync.a
+          R6_TCI_ARCHIVE: ${{ github.workspace }}/.ci-cache/libunicorn.a
+        run: |
+          set -euo pipefail
+          bash Resources/AuthFix/build.sh
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.7.2-Download-Test-unsigned.ipa
+          python3 - <<'PYTHON'
+          import plistlib
+          import zipfile
+
+          ipa = "artifacts/Velo-5.7.2-Download-Test-unsigned.ipa"
+          with zipfile.ZipFile(ipa) as archive:
+              assert archive.testzip() is None
+              assert not any("fairplayed" in path.lower() for path in archive.namelist())
+              info = plistlib.loads(archive.read("Payload/Asspp.app/Info.plist"))
+              assert info["CFBundleShortVersionString"] == "5.7.2"
+              assert info["CFBundleVersion"] == "2026111801"
+              assert info["CFBundleIdentifier"] == "wiki.qaq.Asspp.AuthFix"
+          PYTHON
+          shasum -a 256 artifacts/Velo-5.7.2-Download-Test-unsigned.ipa > artifacts/Velo-5.7.2-Download-Test-unsigned.ipa.sha256
+      - name: Upload test IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Velo-5.7.2-Download-Test-unsigned
+          path: |
+            artifacts/Velo-5.7.2-Download-Test-unsigned.ipa
+            artifacts/Velo-5.7.2-Download-Test-unsigned.ipa.sha256
+            artifacts/build-info.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Velo-Download-Test-build-logs
+          path: artifacts/*.log

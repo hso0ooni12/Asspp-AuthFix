@@ -10,175 +10,116 @@ import SwiftUI
 
 struct ProductHistoryView: View {
     @State var vm: AppPackageArchive
-    @State private var showErrorAlert = false
+    @State private var showDownloadError = false
+    @State private var downloadError = ""
     @State private var downloadingVersions: Set<String> = []
     @State private var downloads = Downloads.this
-    @Environment(\.dismiss) var dismiss
 
     var body: some View {
         List {
-            if let message = vm.error, !vm.versionIdentifiers.isEmpty {
-                Label("Showing saved versions. Live refresh was unavailable.", systemImage: "wifi.exclamationmark")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityHint(message)
-                    .listRowBackground(Color.clear)
-            }
-            if vm.versionIdentifiers.isEmpty && !vm.loading {
-                ContentUnavailableView {
-                    Label("Version history unavailable", systemImage: "clock.arrow.circlepath")
-                } description: {
-                    Text(vm.error == nil
-                        ? "The previous versions have not loaded yet."
-                        : "Apple isn't returning an authorized history for this account. Existing saved versions are preserved.")
-                } actions: {
-                    Button("Retry History") {
-                        vm.refreshVersionHistory {
-                            await MainActor.run { vm.populateNextVersionItems() }
-                        }
-                    }
-                    .buttonStyle(VeloPillButtonStyle(prominent: true))
-                }
-                .listRowBackground(Color.clear)
-            }
             Section("Previous Versions") {
-                ForEach(vm.versionIdentifiers, id: \.self) { key in
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        if let verified = vm.versionItems[key] {
-                            Text(verified.displayVersion)
-                                .font(.body.weight(.medium))
-                                .foregroundStyle(.primary)
-                        } else {
-                            Text(vm.loading ? "Verifying version…" : "Version unavailable")
-                                .font(.body.weight(.medium))
-                                .foregroundStyle(.secondary)
-                            Text("Exact version not yet verified by Apple")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        if let date = vm.versionItems[key]?.releaseDate, date != .distantPast {
-                            Text(date, style: .date)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer(minLength: 8)
-                    if let accountID = vm.accountIdentifier, let pkg = vm.package(for: key) {
-                        Button {
-                            downloadingVersions.insert(key)
-                            Task {
-                                defer { downloadingVersions.remove(key) }
-                                do {
-                                    try await Downloads.this.startDownload(for: pkg, accountID: accountID)
-                                } catch {
-                                    vm.error = error.localizedDescription
+                ForEach(vm.verifiedVersionIDs, id: \.self) { identifier in
+                    if let version = vm.versionItems[identifier] {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(version.displayVersion)
+                                    .font(.body.weight(.medium))
+                                if let date = vm.versionItems[identifier]?.releaseDate, date != .distantPast {
+                                    Text(date, style: .date)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
-                        } label: {
-                            if let stage = downloads.pendingPreparations.first(where: {
-                                $0.key.bundleID == vm.package.software.bundleID && $0.key.version == key
-                            })?.value {
-                                VStack(spacing: 3) {
-                                    ProgressView().controlSize(.mini)
-                                    Text(stage.compactLabel)
-                                        .font(.system(size: 9, weight: .medium))
-                                }
-                                .accessibilityLabel(stage.statusText)
-                            } else if downloadingVersions.contains(key) {
-                                ProgressView().tint(.primary)
-                            } else {
-                                Text("GET")
-                            }
+                            Spacer(minLength: 8)
+                            downloadButton(for: identifier)
                         }
-                        .buttonStyle(VeloPillButtonStyle(prominent: true))
-                        .disabled(downloadingVersions.contains(key))
+                        .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
                     }
                 }
-                .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
-            }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .overlay {
-            ZStack {
-                Rectangle()
-                    .foregroundStyle(.clear)
-                    .background(.ultraThinMaterial)
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                    Text("Checking available versions…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .smallControlSizeOnMac()
-            }
-            .opacity(vm.loading && vm.versionIdentifiers.isEmpty ? 1 : 0)
-            .animation(.default, value: vm.loading)
-            .ignoresSafeArea(edges: [.vertical])
-        }
-        .animation(.default, value: vm.versionIdentifiers)
-        .animation(.default, value: vm.versionItems)
-        .animation(.default, value: vm.loading)
-        .navigationTitle("Version History")
-        .toolbar {
-            ToolbarItem(placement: toolbarPlacement) {
-                Menu {
+                if vm.loading {
+                    ProgressView("Checking available versions…")
+                } else if vm.canLoadMoreVersions {
                     Button {
                         vm.populateNextVersionItems()
                     } label: {
                         Label("Load More", systemImage: "arrow.down.circle")
                     }
-                    .disabled(vm.isVersionItemsFullyLoaded)
-                    Divider()
-                    Button(role: .destructive) {
-                        vm.refreshVersionHistory {
-                            await MainActor.run { vm.populateNextVersionItems() }
-                        }
+                } else if vm.verifiedVersionIDs.isEmpty {
+                    Label("Version history unavailable", systemImage: "clock.arrow.circlepath")
+                        .foregroundStyle(.secondary)
+                }
+                if let error = vm.error {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let url = vm.appStoreURL {
+                Link(destination: url) {
+                    Label("Version History on the App Store", systemImage: "arrow.up.right.square")
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Version History")
+        .toolbar {
+            if vm.accountIdentifier != nil {
+                ToolbarItem(placement: toolbarPlacement) {
+                    Button {
+                        vm.refreshVersionHistory()
                     } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise.circle")
+                        Label("Refresh", systemImage: "arrow.clockwise")
                     }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .disabled(vm.loading) // just make sure
-                .opacity(vm.loading ? 0 : 1)
-                .overlay { // using overlay to maintain same size while loading
-                    if vm.loading {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                        #if os(macOS)
-                            .controlSize(.small)
-                        #endif
-                    }
+                    .disabled(vm.loading)
                 }
             }
         }
-        .alert("Oops", isPresented: $showErrorAlert) {
-            Button("OK") {
-                vm.error = nil
-                if vm.shouldDismiss {
-                    dismiss()
-                }
-            }
+        .alert("Download", isPresented: $showDownloadError) {
+            Button("OK", role: .cancel) {}
         } message: {
-            Text(vm.error ?? String(localized: "Unknown Error"))
-        }
-        .onChange(of: vm.error) { _, newValue in
-            // Access-denied is persistent, not a useful modal. Show a stable
-            // inline explanation and preserve any cached IDs instead.
-            showErrorAlert = newValue != nil &&
-                !(newValue?.contains("HTTP 403") ?? false)
+            Text(downloadError)
         }
         .onAppear {
             if vm.versionIdentifiers.isEmpty {
-                vm.populateVersionIdentifiers {
-                    await MainActor.run { vm.populateNextVersionItems() }
-                }
-            } else if !vm.isVersionItemsFullyLoaded {
+                vm.populateVersionIdentifiers()
+            } else {
                 vm.populateNextVersionItems()
             }
+        }
+    }
+
+    @ViewBuilder
+    private func downloadButton(for identifier: String) -> some View {
+        if let accountID = vm.accountIdentifier, let package = vm.package(for: identifier) {
+            Button {
+                downloadingVersions.insert(identifier)
+                Task {
+                    defer { downloadingVersions.remove(identifier) }
+                    do {
+                        try await downloads.startDownload(for: package, accountID: accountID)
+                    } catch {
+                        downloadError = error.localizedDescription
+                        showDownloadError = true
+                    }
+                }
+            } label: {
+                if let stage = downloads.pendingPreparations.first(where: {
+                    $0.key.accountID == accountID && $0.key.appID == package.software.id && $0.key.version == identifier
+                })?.value {
+                    VStack(spacing: 3) {
+                        ProgressView().controlSize(.mini)
+                        Text(stage.compactLabel)
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .accessibilityLabel(stage.statusText)
+                } else if downloadingVersions.contains(identifier) {
+                    ProgressView().tint(.primary)
+                } else {
+                    Text("GET")
+                }
+            }
+            .buttonStyle(VeloPillButtonStyle(prominent: true))
+            .disabled(downloadingVersions.contains(identifier))
         }
     }
 

@@ -16,9 +16,6 @@ struct SettingView: View {
     @Environment(\.openURL) private var openURL
     @State private var vm = AppStore.this
     @AppStorage("Velo.Appearance") private var appearance = "system"
-    #if os(iOS)
-        @AppStorage("Asspp.AutoPrepareDecrypt") private var autoPrepareDecrypt = false
-    #endif
 
     @State private var showDeviceIdWarning = false
     @State private var editingDeviceId = false
@@ -26,10 +23,6 @@ struct SettingView: View {
     @State private var showResetConfirmation = false
     @State private var showDeleteAllConfirmation = false
     @State private var showAdvancedSettings = false
-    #if os(iOS)
-        @State private var showClearPreparedConfirmation = false
-        @State private var decryptor = DecryptionCenter.shared
-    #endif
 
     var body: some View {
         NavigationStack {
@@ -57,34 +50,6 @@ struct SettingView: View {
                     Text("Dark").tag("dark")
                 }
             }
-
-            #if os(iOS)
-                Section {
-                    Toggle(isOn: $autoPrepareDecrypt) {
-                        Label("Auto Prepare Decryptor", systemImage: "lock.open.fill")
-                    }
-                    Button {
-                        showClearPreparedConfirmation = true
-                    } label: {
-                        Label("Clear Prepared Helpers", systemImage: "trash")
-                    }
-                    Text("Prepared IPA storage: \(ByteCountFormatter.string(fromByteCount: decryptor.preparedStorageSize, countStyle: .file))")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } header: {
-                    Label("DECRYPTION", systemImage: "lock.open.fill")
-                } footer: {
-                    Text("When a download finishes, Velo can prepare and share a FairPlayed helper automatically. The helper must then be signed and installed using your signing app. Decryption starts automatically when the helper opens.")
-                }
-                .listRowBackground(AssppTheme.surface)
-                .confirmationDialog("Remove all prepared FairPlayed helpers?", isPresented: $showClearPreparedConfirmation) {
-                    Button("Clear Prepared Helpers", role: .destructive) {
-                        decryptor.clearPreparedHelpers()
-                    }
-                } message: {
-                    Text("Downloaded original IPAs are kept. Generated FairPlayed helpers are removed.")
-                }
-            #endif
 
             Section {
                 Toggle("Demo Mode", isOn: $vm.demoMode)
@@ -236,7 +201,7 @@ struct SettingView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your downloads, FairPlayed helpers and Apple accounts will be preserved.")
+            Text("Your downloads and Apple accounts will be preserved.")
         }
     }
 }

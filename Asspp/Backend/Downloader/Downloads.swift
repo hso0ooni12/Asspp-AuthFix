@@ -109,6 +109,7 @@ class Downloads {
     }
 
     func suspend(request: PackageManifest) {
+        guard !finalizingIDs.contains(request.id) else { return }
         logger.info("suspending download request id: \(request.id)")
         queuedTransferIDs.removeAll { $0 == request.id }
         if activeTransferIDs.contains(request.id) {
@@ -122,9 +123,10 @@ class Downloads {
 
     func resume(request: PackageManifest) {
         logger.info("resuming download request id: \(request.id)")
-        guard manifests.contains(where: { $0.id == request.id }) else { return }
+        guard manifests.contains(where: { $0.id == request.id }),
+              !finalizingIDs.contains(request.id) else { return }
         if !activeTransferIDs.contains(request.id) {
-            if activeTransferIDs.count >= 2 {
+            if !canStartTransfer {
                 if !queuedTransferIDs.contains(request.id) {
                     queuedTransferIDs.append(request.id)
                 }
@@ -147,6 +149,7 @@ class Downloads {
             return
         }
         let attemptToken = UUID()
+        let transferStartedAt = ContinuousClock.now
         transferAttemptTokens[request.id] = attemptToken
 
         seed
@@ -208,7 +211,9 @@ class Downloads {
                     switch completion {
                     case let .success(url):
                         self.automaticTransferRetries.removeValue(forKey: request.id)
+                        logger.info("IPA byte transfer finished in \(transferStartedAt.duration(to: .now))")
                         self.finalizingIDs.insert(request.id)
+                        self.releaseTransferSlot(request.id)
                         Task.detached {
                             do {
                                 try await self.finalize(manifest: request, preparedContentAt: url)
@@ -222,14 +227,6 @@ class Downloads {
                                     self.releaseTransferSlot(request.id)
                                     self.refreshRunningTaskCount()
                                     self.saveManifests()
-                                    #if os(iOS)
-                                        // Optional foreground preparation; signing and installation
-                                        // of the resulting helper remain separate user actions.
-                                        if self.manifests.contains(where: { $0.id == request.id }),
-                                           UserDefaults.standard.bool(forKey: "Asspp.AutoPrepareDecrypt") {
-                                            DecryptionCenter.shared.prepare(request)
-                                        }
-                                    #endif
                                 }
                             } catch {
                                 await MainActor.run {
@@ -336,6 +333,7 @@ class Downloads {
     }
 
     func restart(request: PackageManifest) {
+        guard !finalizingIDs.contains(request.id) else { return }
         logger.info("restarting download request id: \(request.id)")
         DiggerManager.shared.cancelTask(for: request.url)
         registeredCallbacks.remove(request.id)
@@ -353,9 +351,14 @@ class Downloads {
         for manifest in manifests { delete(request: manifest) }
     }
 
+    // Finish a file on disk while the next transfer starts, with a bounded total backlog.
+    private var canStartTransfer: Bool {
+        activeTransferIDs.count < 2 && activeTransferIDs.count + finalizingIDs.count < 3
+    }
+
     private func releaseTransferSlot(_ id: UUID) {
-        guard activeTransferIDs.remove(id) != nil else { return }
-        while activeTransferIDs.count < 2 && !queuedTransferIDs.isEmpty {
+        activeTransferIDs.remove(id)
+        while canStartTransfer && !queuedTransferIDs.isEmpty {
             let nextID = queuedTransferIDs.removeFirst()
             guard let next = manifests.first(where: { $0.id == nextID }),
                   next.state.status == .pending else { continue }

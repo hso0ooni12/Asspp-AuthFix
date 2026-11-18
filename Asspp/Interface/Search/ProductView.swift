@@ -282,7 +282,7 @@ struct ProductView: View {
             sectionTitle("Version History")
             NavigationLink {
                 LazyView(ProductHistoryView(vm: AppPackageArchive(
-                    accountID: selection, region: region, package: archive.package)))
+                    accountID: account?.id, region: region, package: archive.package)))
             } label: {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -301,7 +301,6 @@ struct ProductView: View {
                 .background(AssppTheme.elevated, in: RoundedRectangle(cornerRadius: 15))
             }
             .buttonStyle(.plain)
-            .disabled(account == nil)
         }
     }
 

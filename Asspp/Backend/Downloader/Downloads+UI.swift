@@ -106,21 +106,26 @@ struct DownloadPreparationStatus {
 actor AccountDownloadGate {
     static let shared = AccountDownloadGate()
     private var held: Set<String> = []
-    private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private struct Waiter {
+        let interactive: Bool
+        let continuation: CheckedContinuation<Void, Never>
+    }
+    private var waiters: [String: [Waiter]] = [:]
 
-    func acquire(_ accountID: String) async {
+    func acquire(_ accountID: String, interactive: Bool = true) async {
         if held.insert(accountID).inserted { return }
         await withCheckedContinuation { continuation in
-            waiters[accountID, default: []].append(continuation)
+            waiters[accountID, default: []].append(Waiter(interactive: interactive, continuation: continuation))
         }
     }
 
     func release(_ accountID: String) {
         if var queue = waiters[accountID], !queue.isEmpty {
-            let next = queue.removeFirst()
+            let index = queue.firstIndex(where: \.interactive) ?? queue.startIndex
+            let next = queue.remove(at: index)
             if queue.isEmpty { waiters.removeValue(forKey: accountID) }
             else { waiters[accountID] = queue }
-            next.resume()
+            next.continuation.resume()
         } else {
             held.remove(accountID)
         }
@@ -151,18 +156,19 @@ extension Downloads {
             return
         }
         pendingPreparations[key] = .init(appName: package.software.name, stage: .waitingForAccount)
-        let startedAt = CFAbsoluteTimeGetCurrent()
+        let startedAt = ContinuousClock.now
         let task = Task { @MainActor in
             await AccountDownloadGate.shared.acquire(accountID)
             pendingPreparations[key] = .init(appName: package.software.name, stage: .connecting)
-            // Defer is synchronous; scheduling this release still preserves
-            // FIFO ownership inside AccountDownloadGate.
+            logger.info("Store preparation: account wait=\(startedAt.duration(to: .now))")
             defer { Task { await AccountDownloadGate.shared.release(accountID) } }
             try Task.checkCancellation()
             try await AppStore.this.withAccount(id: accountID) { account in
+                let attempt = StoreDownloadService.DownloadAttempt()
                 let downloadOutput: DownloadOutput
                 do {
-                    downloadOutput = try await self.prepareTicketWithRetries(account: &account.account, package: package, key: key)
+                    downloadOutput = try await self.prepareTicketWithRetries(
+                        account: &account.account, package: package, key: key, attempt: attempt)
                 } catch ApplePackageError.licenseRequired {
                     // The Get action authorizes acquiring a FREE license, never
                     // charging the account or accepting Apple terms silently.
@@ -171,44 +177,30 @@ extension Downloads {
                     }
                     pendingPreparations[key] = .init(appName: package.software.name, stage: .acquiringFreeLicense)
                     logger.info("Free app lacks a license; acquiring and resuming requested download.")
-                    var licenseTransportInterrupted = false
+                    let licenseStartedAt = ContinuousClock.now
                     do {
-                        try await ApplePackage.Purchase.purchase(account: &account.account, app: package.software)
-                    } catch {
-                        if FreeLicensePolicy.isExpiredToken(error.localizedDescription) {
-                            // Only pay the cost of an SAP refresh when Apple's
-                            // response proves that the stored token has expired.
+                        do {
+                            try await ApplePackage.Purchase.purchase(account: &account.account, app: package.software)
+                        } catch where FreeLicensePolicy.isExpiredToken(error.localizedDescription) {
                             try await ApplePackage.Authenticator.rotatePasswordToken(for: &account.account)
                             try await ApplePackage.Purchase.purchase(account: &account.account, app: package.software)
-                        } else if FreeLicensePolicy.isTransportInterruption(error) {
-                            // Do not repeat a non-idempotent license POST.
-                            // The server may have granted the license before
-                            // the connection failed. Verify with a safe read.
-                            licenseTransportInterrupted = true
-                            logger.info("Free license transport interrupted; verifying entitlement without another purchase")
-                        } else if !FreeLicensePolicy.isAlreadyOwned(error.localizedDescription) {
+                        }
+                    } catch {
+                        logger.info("Free license request failed: \(StoreDiagnostics.errorSummary(error))")
+                        guard FreeLicensePolicy.isTransportInterruption(error) ||
+                            FreeLicensePolicy.isAlreadyOwned(error.localizedDescription)
+                        else {
                             throw error
                         }
                     }
-                    pendingPreparations[key] = .init(appName: package.software.name, stage: .verifyingFreeLicense)
-                    // One safe entitlement check after acquisition or transport
-                    // interruption, never an unbounded license request loop.
-                    do {
-                        downloadOutput = try await self.prepareTicketWithRetries(account: &account.account, package: package, key: key)
-                    } catch ApplePackageError.licenseRequired where licenseTransportInterrupted {
-                        // The license POST might have succeeded just before
-                        // the transport dropped. Give Apple time to publish
-                        // entitlement, and repeat ONLY safe ticket reads.
-                        downloadOutput = try await self.verifyLicenseAfterInterruption(
-                            account: &account.account, package: package, key: key)
-                    }
+                    logger.info("Free license request finished in \(licenseStartedAt.duration(to: .now))")
+                    downloadOutput = try await self.verifyFreeLicense(
+                        account: &account.account, package: package, key: key, attempt: attempt)
                 }
                 pendingPreparations[key] = .init(appName: package.software.name, stage: .preparingTransfer)
                 var resolvedPackage = package
-                // Historical rows may only have an external build ID until
-                // Apple returns full metadata. Persist the actual app version
-                // from the validated download ticket, not a placeholder ID.
-                if !downloadOutput.bundleShortVersionString.isEmpty {
+                // Historical rows already use the version verified in the package.
+                if package.externalVersionID == nil, !downloadOutput.bundleShortVersionString.isEmpty {
                     resolvedPackage.software.version = downloadOutput.bundleShortVersionString
                 }
                 let request = try Downloads.this.add(request: .init(
@@ -223,7 +215,7 @@ extension Downloads {
         defer {
             pendingDownloadRequests[key] = nil
             pendingPreparations[key] = nil
-            logger.info("Store request finished after \(Int(CFAbsoluteTimeGetCurrent() - startedAt))s")
+            logger.info("Store preparation finished in \(startedAt.duration(to: .now))")
         }
         try await task.value
     }
@@ -231,13 +223,14 @@ extension Downloads {
     /// Automatically repeat a safe download-ticket read after transient
     /// networking failures. Never replay Apple license acquisition.
     private func prepareTicketWithRetries(
-        account: inout Account, package: AppStore.AppPackage, key: DownloadRequestIdentity
+        account: inout Account, package: AppStore.AppPackage, key: DownloadRequestIdentity,
+        attempt: StoreDownloadService.DownloadAttempt
     ) async throws -> DownloadOutput {
         var retries = 0
         while true {
             try Task.checkCancellation()
             do {
-                return try await StoreDownloadService.download(account: &account, package: package)
+                return try await StoreDownloadService.download(account: &account, package: package, attempt: attempt)
             } catch {
                 try Task.checkCancellation()
                 guard StoreDownloadProtocol.shouldRetryPreparation(error, completedRetries: retries) else {
@@ -254,28 +247,29 @@ extension Downloads {
         }
     }
 
-    /// Apple may grant a free license before the response connection drops.
-    /// Poll the read-only download ticket for a short bounded period instead
-    /// of issuing another purchase request or asking for another GET tap.
-    private func verifyLicenseAfterInterruption(
-        account: inout Account, package: AppStore.AppPackage, key: DownloadRequestIdentity
+    /// Apple can take a moment to expose a newly granted license to downloads.
+    /// The same ticket checks cover a connection drop during acquisition.
+    private func verifyFreeLicense(
+        account: inout Account, package: AppStore.AppPackage, key: DownloadRequestIdentity,
+        attempt: StoreDownloadService.DownloadAttempt
     ) async throws -> DownloadOutput {
-        for retry in 0...StoreDownloadProtocol.maximumPreparationRetries {
+        let startedAt = ContinuousClock.now
+        defer { logger.info("Free license verification finished in \(startedAt.duration(to: .now))") }
+        let delays = FreeLicensePolicy.verificationDelays
+        for retry in 0 ... delays.count {
             try Task.checkCancellation()
             pendingPreparations[key] = .init(appName: package.software.name,
                 stage: .verifyingFreeLicense, retryAttempt: retry)
             do {
-                return try await prepareTicketWithRetries(
-                    account: &account, package: package, key: key)
+                return try await StoreDownloadService.download(account: &account, package: package, attempt: attempt)
             } catch ApplePackageError.licenseRequired {
-                guard retry < StoreDownloadProtocol.maximumPreparationRetries else {
+                guard retry < delays.count else {
                     throw NSError(domain: "Velo.LicenseTransport", code: 1, userInfo: [
                         NSLocalizedDescriptionKey:
                             "Apple has not confirmed the free license. Verify this app under your Apple Account in the App Store before trying again."
                     ])
                 }
-                try await Task.sleep(nanoseconds:
-                    StoreDownloadProtocol.preparationRetryDelayNanoseconds(retry))
+                try await Task.sleep(for: delays[retry])
             }
         }
         throw StoreDownloadError.empty

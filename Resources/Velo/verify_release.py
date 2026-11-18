@@ -69,7 +69,7 @@ def validate_sources():
     auth = (ROOT / "Asspp/Interface/Account/AddAccountView.swift").read_text()
     assert "prepareSecureConnection" in auth and "setupTask.value" in auth
     service = (ROOT / "Asspp/Backend/AppStore/StoreDownloadService.swift").read_text()
-    assert "defer { session.invalidateAndCancel() }" in service
+    assert "URLSessionConfiguration.ephemeral" in service and "session.invalidateAndCancel()" in service
     assert "private static let metadataSession" not in service
     assert "DownloadPreparation.shared.generation" not in service
     assert "DownloadRouteAdvisor.shared.shouldTryPreferred" in service
@@ -80,7 +80,7 @@ def validate_sources():
     assert "DownloadTransferRetryPolicy" in protocol and "historyIdentifiers" in protocol
     assert "dataWithRetry(session: session, request: request" in service
     archive = (ROOT / "Asspp/Backend/AppStore/AppPackageArchive.swift").read_text()
-    assert "first(where:" in archive and "unavailableVersionIDs" in archive
+    assert "StoreDownloadProtocol.historyBatch" in archive and "unavailableVersionIDs" in archive
     assert "withLockedAccount" in archive
     assert "automaticTransferRetries" in manager and "transferAttemptTokens" in manager
     for name in ["Account/AccountView", "Download/DownloadView", "Search/SearchView", "Setting/SettingView", "Welcome/MainView"]:

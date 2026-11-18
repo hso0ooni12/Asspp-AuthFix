@@ -17,6 +17,11 @@ struct DownloadProtocolChecks {
         precondition(requests.count == 2 && requests[0].0 == .volumeStore && requests[0].1 == nil)
         precondition(requests[1].0 == .redownload && requests[1].1 == "890598805" && lookups == 1)
         _ = try StoreDownloadProtocol.packageItem(result, bundleID: "example.app")
+        do {
+            _ = try StoreDownloadProtocol.packageItem(
+                result, bundleID: "example.app", version: "1001", requiresExactVersion: true)
+            fatalError("Accepted a historical download without a confirmed version ID")
+        } catch StoreDownloadError.invalidPackage {}
 
         // Intermittent Apple 5xx/network errors must recover automatically,
         // without treating auth/403/license failures as retryable.
@@ -75,6 +80,9 @@ struct DownloadProtocolChecks {
         precondition(StoreDownloadProtocol.preparationRetryDelayNanoseconds(0) == 1_000_000_000)
         precondition(StoreDownloadProtocol.preparationRetryDelayNanoseconds(1) == 2_000_000_000)
         precondition(!StoreDownloadProtocol.isTransientHTTPStatus(403))
+        precondition(StoreDownloadProtocol.isLicenseRequired(["failureType": 9610], httpStatus: 403))
+        precondition(!StoreDownloadProtocol.isLicenseRequired(["failureType": 9610], httpStatus: 503))
+        precondition(!StoreDownloadProtocol.isLicenseRequired([:], httpStatus: 403))
         precondition(!StoreDownloadProtocol.isTransientNetworkError(
             NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)))
         precondition(StoreDownloadProtocol.isTransientNetworkError(
@@ -92,9 +100,15 @@ struct DownloadProtocolChecks {
             "softwareVersionExternalIdentifiers": [123, "124", 123, "bad"],
         ]])
         precondition(historical == ["123", "124"])
-        precondition(StoreDownloadProtocol.historyDisplayVersion(metadata: [:], externalID: "123") == "ID 123")
-        precondition(StoreDownloadProtocol.historyDisplayVersion(
-            metadata: ["bundleShortVersionString": " 1.2.3 "], externalID: "123") == "1.2.3")
+        let history = ["1001", "1001", "1002", "1003", "1004", "1005"]
+        precondition(StoreDownloadProtocol.historyBatch(history, excluding: ["1002"], limit: 4) ==
+            ["1001", "1003", "1004", "1005"])
+        precondition(StoreDownloadProtocol.historyBatch(history, excluding: [], limit: 0).isEmpty)
+        precondition(StoreDownloadProtocol.verifiedHistoryVersion(" 446.3 ", externalID: "1001") == "446.3")
+        precondition(StoreDownloadProtocol.verifiedHistoryVersion("27", externalID: "1001") == "27")
+        precondition(StoreDownloadProtocol.verifiedHistoryVersion("1001", externalID: "1001") == nil)
+        precondition(StoreDownloadProtocol.verifiedHistoryVersion("863927451", externalID: "1001") == nil)
+        precondition(StoreDownloadProtocol.verifiedHistoryVersion("446..3", externalID: "1001") == nil)
 
         // Preserve historical IDs on both endpoints; numeric 5002 is retryable.
         requests = []

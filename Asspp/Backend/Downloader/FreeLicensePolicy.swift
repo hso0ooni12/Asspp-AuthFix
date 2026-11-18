@@ -3,6 +3,8 @@ import Foundation
 /// Pure decision policy: one Get tap can acquire a missing FREE license.
 /// Nothing ever authorizes automatic paid purchases.
 enum FreeLicensePolicy {
+    static let verificationDelays: [Duration] = [.milliseconds(350), .milliseconds(850)]
+
     static func shouldAcquire(price: Double?) -> Bool {
         guard let price, price.isFinite else { return false }
         return price == 0

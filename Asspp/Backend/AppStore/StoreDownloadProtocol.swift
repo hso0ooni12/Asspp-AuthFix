@@ -94,10 +94,26 @@ enum StoreDownloadProtocol {
         return versions
     }
 
-    static func historyDisplayVersion(metadata: [String: Any], externalID: String) -> String {
-        let version = (metadata["bundleShortVersionString"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return version.isEmpty ? "ID \(externalID)" : version
+    static func historyBatch(_ identifiers: [String], excluding: Set<String>, limit: Int) -> [String] {
+        guard limit > 0 else { return [] }
+        var seen = excluding
+        var batch: [String] = []
+        for identifier in identifiers where seen.insert(identifier).inserted {
+            batch.append(identifier)
+            if batch.count == limit { break }
+        }
+        return batch
+    }
+
+    static func verifiedHistoryVersion(_ value: String, externalID: String) -> String? {
+        let version = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard version != externalID,
+              version.split(separator: ".", omittingEmptySubsequences: false).allSatisfy({ part in
+                  !part.isEmpty && part.utf8.allSatisfy { (48 ... 57).contains($0) }
+              }), !version.isEmpty,
+              version.contains(".") || version.count < 7
+        else { return nil }
+        return version
     }
 
     static func isMainInfoPlist(_ path: String) -> Bool {
@@ -184,6 +200,10 @@ enum StoreDownloadProtocol {
         let metrics = response["metrics"] as? [String: Any]
         let code = StoreProtocol.string(metrics?["messageCode"])
         return code == "0" ? "" : code
+    }
+
+    static func isLicenseRequired(_ response: [String: Any], httpStatus: Int = 200) -> Bool {
+        (httpStatus == 200 || httpStatus == 403) && failureCode(response) == "9610"
     }
 
     static func fallbackReason(_ response: [String: Any]) -> String? {
@@ -295,7 +315,8 @@ enum StoreDownloadProtocol {
         return "songList=\(items) failure=\(numeric(failureCode(response))) status=\(numeric(response["status"])) customerMessage=\(message) dialog=\(response["dialog"] != nil) action=\(response["action"] != nil)"
     }
 
-    static func packageItem(_ response: [String: Any], bundleID: String, version: String? = nil) throws -> [String: Any] {
+    static func packageItem(_ response: [String: Any], bundleID: String, version: String? = nil,
+                            requiresExactVersion: Bool = false) throws -> [String: Any] {
         let code = failureCode(response)
         let message = StoreProtocol.string(response["customerMessage"])
         if !code.isEmpty {
@@ -326,7 +347,7 @@ enum StoreDownloadProtocol {
             throw StoreDownloadError.invalidPackage
         }
         let returnedVersion = StoreProtocol.string(metadata["softwareVersionExternalIdentifier"])
-        if let version, !returnedVersion.isEmpty, returnedVersion != version {
+        if let version, requiresExactVersion || !returnedVersion.isEmpty, returnedVersion != version {
             throw StoreDownloadError.invalidPackage
         }
         return item
