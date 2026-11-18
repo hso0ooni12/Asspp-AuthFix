@@ -17,7 +17,7 @@ enum StoreDownloadError: LocalizedError {
             String(localized: "Apple returned an invalid download redirect.")
         case let .response(status), let .emptyResponse(status):
             status == 403
-                ? String(localized: "Apple denied access (HTTP 403). Check that this Apple Account owns the app and matches its App Store region. History may not be available for every app. Repeated identical requests will not fix an access denial.")
+                ? String(localized: "Apple returned HTTP 403. This may be a temporary request limit, a device-verification issue, or an account/region restriction. Velo will not repeat denied requests indefinitely. Try again later or check the app in the official App Store.")
                 : String(localized: "Apple's download service returned an invalid response (HTTP \(status)).")
         case .invalidPackage:
             String(localized: "Apple returned incomplete or mismatched package information.")
