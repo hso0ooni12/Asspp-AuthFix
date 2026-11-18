@@ -185,6 +185,7 @@ struct MainView: View {
     private struct LegacyTabMainView: View {
         @State private var selection: VeloTab = .home
         @State private var dvm = Downloads.this
+        @State private var decryptor = DecryptionCenter.shared
         @AppStorage("Velo.Appearance") private var appearance = "system"
         @AppStorage("searchKey") private var searchKey = ""
 
@@ -210,6 +211,9 @@ struct MainView: View {
                     .tabItem { Label("Settings", systemImage: "gearshape") }
                     .tag(VeloTab.settings)
             }
+            .sheet(item: $decryptor.sharePackage) { item in
+                AssppActivityShare(items: [item.url])
+            }
             .tint(AssppTheme.accent)
             .preferredColorScheme(VeloAppearance.scheme(for: appearance))
         }
@@ -219,6 +223,7 @@ struct MainView: View {
     struct NewMainView: View {
         @State private var selection: VeloTab = .home
         @State private var dvm = Downloads.this
+        @State private var decryptor = DecryptionCenter.shared
         @AppStorage("Velo.Appearance") private var appearance = "system"
         @AppStorage("searchKey") private var searchKey = ""
 
@@ -243,6 +248,9 @@ struct MainView: View {
             }
             .neverMinimizeTab()
             .sidebarAdaptableTabView()
+            .sheet(item: $decryptor.sharePackage) { item in
+                AssppActivityShare(items: [item.url])
+            }
             .tint(AssppTheme.accent)
             .preferredColorScheme(VeloAppearance.scheme(for: appearance))
         }

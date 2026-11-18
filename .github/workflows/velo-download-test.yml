@@ -1,8 +1,8 @@
-name: Velo 5.7.2 Download Test
+name: Velo 5.7.3 FairPlayed Restored
 
 on:
   push:
-    branches: [velo-5-7-2-download-test]
+    branches: [velo-5-7-3-fairplayed-restored]
   workflow_dispatch:
 
 permissions:
@@ -125,6 +125,50 @@ jobs:
           for size in 16 32 64 128 256 512; do
             sips -s format png -z "$size" "$size" "$src" --out "$icons/asspp_${size}.png" >/dev/null
           done
+      - name: Build pinned FairPlayed engine and embed helper shell
+        if: steps.native_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/morzelowski/FairPlayed.git "${RUNNER_TEMP}/FairPlayed"
+          git -C "${RUNNER_TEMP}/FairPlayed" checkout --detach bad7df138839b5e0ac8b9f20cc4689140b8436fb
+          git -C "${RUNNER_TEMP}/FairPlayed" apply --check "${GITHUB_WORKSPACE}/Resources/FairPlayed/one-page-stub.patch"
+          git -C "${RUNNER_TEMP}/FairPlayed" apply "${GITHUB_WORKSPACE}/Resources/FairPlayed/one-page-stub.patch"
+          grep -F 'one_page_stub' "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed/fpcore.c"
+          git -C "${RUNNER_TEMP}/FairPlayed" apply --check "${GITHUB_WORKSPACE}/Resources/FairPlayed/auto-export-and-share.patch"
+          git -C "${RUNNER_TEMP}/FairPlayed" apply "${GITHUB_WORKSPACE}/Resources/FairPlayed/auto-export-and-share.patch"
+          grep -F 'autoExportStarted' "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed/main.m"
+          git -C "${RUNNER_TEMP}/FairPlayed" apply --check "${GITHUB_WORKSPACE}/Resources/FairPlayed/monochrome-export-picker.patch"
+          git -C "${RUNNER_TEMP}/FairPlayed" apply "${GITHUB_WORKSPACE}/Resources/FairPlayed/monochrome-export-picker.patch"
+          grep -F 'FPExportPickerController' "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed/main.m"
+          xcodebuild \
+            -project "${RUNNER_TEMP}/FairPlayed/FairPlayed/FairPlayed.xcodeproj" \
+            -scheme FairPlayed -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "${RUNNER_TEMP}/FairPlayedBuild" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build > "${RUNNER_TEMP}/fairplayed-build.log" 2>&1 || { tail -120 "${RUNNER_TEMP}/fairplayed-build.log"; exit 1; }
+          shell_app="${RUNNER_TEMP}/FairPlayedBuild/Build/Products/Release-iphoneos/FairPlayed.app"
+          test -s "${shell_app}/FairPlayed"
+          # Match Velo's single-color identity in every generated helper.
+          swift Resources/Velo/make_icon.swift "${shell_app}/FairPlayedIcon.png"
+          test -s "${shell_app}/FairPlayedIcon.png"
+          icon_plist="${shell_app}/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Delete :CFBundleIcons' "${icon_plist}" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons dict' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons:CFBundlePrimaryIcon dict' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles array' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:0 string FairPlayedIcon' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string FairPlayedIcon' "${icon_plist}"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:0' "${icon_plist}"
+
+          ditto -c -k --keepParent "${shell_app}" Asspp/FairPlayed-shell.zip
+          unzip -tq Asspp/FairPlayed-shell.zip
+          echo "Pinned FairPlayed shell bundled into Asspp without user file selection"
+      - name: Verify FairPlayed helper archive
+        run: |
+          test -s Asspp/FairPlayed-shell.zip
+          unzip -tq Asspp/FairPlayed-shell.zip
       - name: Build unsigned test IPA
         env:
           VELO_VERIFIED_TRANSPORT_RUN: "44276719973"
@@ -134,28 +178,32 @@ jobs:
         run: |
           set -euo pipefail
           bash Resources/AuthFix/build.sh
-          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.7.2-Download-Test-unsigned.ipa
+          cp artifacts/Asspp-AuthFix-R2-unsigned.ipa artifacts/Velo-5.7.3-FairPlayed-unsigned.ipa
           python3 - <<'PYTHON'
           import plistlib
           import zipfile
 
-          ipa = "artifacts/Velo-5.7.2-Download-Test-unsigned.ipa"
+          ipa = "artifacts/Velo-5.7.3-FairPlayed-unsigned.ipa"
           with zipfile.ZipFile(ipa) as archive:
               assert archive.testzip() is None
-              assert not any("fairplayed" in path.lower() for path in archive.namelist())
+              assert "Payload/Asspp.app/FairPlayed-shell.zip" in archive.namelist()
+              import io
+              with zipfile.ZipFile(io.BytesIO(archive.read("Payload/Asspp.app/FairPlayed-shell.zip"))) as helper:
+                  assert helper.testzip() is None
+                  assert any(path.endswith("FairPlayed.app/FairPlayed") for path in helper.namelist())
               info = plistlib.loads(archive.read("Payload/Asspp.app/Info.plist"))
-              assert info["CFBundleShortVersionString"] == "5.7.2"
-              assert info["CFBundleVersion"] == "2026111801"
+              assert info["CFBundleShortVersionString"] == "5.7.3"
+              assert info["CFBundleVersion"] == "2026111802"
               assert info["CFBundleIdentifier"] == "wiki.qaq.Asspp.AuthFix"
           PYTHON
-          shasum -a 256 artifacts/Velo-5.7.2-Download-Test-unsigned.ipa > artifacts/Velo-5.7.2-Download-Test-unsigned.ipa.sha256
+          shasum -a 256 artifacts/Velo-5.7.3-FairPlayed-unsigned.ipa > artifacts/Velo-5.7.3-FairPlayed-unsigned.ipa.sha256
       - name: Upload test IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Velo-5.7.2-Download-Test-unsigned
+          name: Velo-5.7.3-FairPlayed-unsigned
           path: |
-            artifacts/Velo-5.7.2-Download-Test-unsigned.ipa
-            artifacts/Velo-5.7.2-Download-Test-unsigned.ipa.sha256
+            artifacts/Velo-5.7.3-FairPlayed-unsigned.ipa
+            artifacts/Velo-5.7.3-FairPlayed-unsigned.ipa.sha256
             artifacts/build-info.json
           if-no-files-found: error
           retention-days: 14

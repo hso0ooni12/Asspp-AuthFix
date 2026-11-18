@@ -6,14 +6,29 @@
 //
 
 import SwiftUI
+#if os(iOS)
+import UniformTypeIdentifiers
+#endif
+
 struct DownloadView: View {
     @State private var vm = Downloads.this
+    @State private var decryptor = DecryptionCenter.shared
+    @State private var selectionMode = false
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var showBatchError = false
+    #if os(iOS)
+    @State private var showIPAImporter = false
+    @State private var importingIPA = false
+    @State private var importError: String?
+    @State private var showImportError = false
+    #endif
     @State private var selectedFilter: DownloadFilter = .all
 
     private enum DownloadFilter: String, CaseIterable, Identifiable {
         case all = "All"
         case active = "Active"
         case ready = "Ready"
+        case completed = "Prepared"
         var id: Self { self }
     }
 
@@ -21,8 +36,20 @@ struct DownloadView: View {
         vm.manifests.filter { !$0.completed }
     }
 
+    private var preparedManifests: [PackageManifest] {
+        vm.manifests.filter {
+            guard $0.completed else { return false }
+            if case .ready = decryptor.status(for: $0) { return true }
+            return false
+        }
+    }
+
     private var readyManifests: [PackageManifest] {
-        vm.manifests.filter(\.completed)
+        vm.manifests.filter { manifest in
+            guard manifest.completed else { return false }
+            if case .ready = decryptor.status(for: manifest) { return false }
+            return true
+        }
     }
 
     var body: some View {
@@ -46,6 +73,40 @@ struct DownloadView: View {
             }
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
+
+            #if os(iOS)
+            if importingIPA {
+                HStack(spacing: 12) {
+                    ProgressView()
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Preparing imported IPA").font(.subheadline.weight(.semibold))
+                        Text("Validating archive and building FairPlayed helper")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            #endif
+            if selectionMode {
+                HStack {
+                    Text("\(selectedIDs.count) selected")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("All") {
+                        selectedIDs = Set(vm.manifests.filter(\.completed).map(\.id))
+                    }
+                    Button("Clear") { selectedIDs.removeAll() }
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+            if decryptor.isPreparingBatch {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Preparing \(decryptor.batchCompleted) / \(decryptor.batchTotal)")
+                    ProgressView(value: Double(decryptor.batchCompleted),
+                                 total: Double(max(decryptor.batchTotal, 1)))
+                        .tint(AssppTheme.accent)
+                }
+            }
 
             if (selectedFilter == .all || selectedFilter == .active) && !vm.pendingPreparations.isEmpty {
                 ForEach(Array(vm.pendingPreparations.keys).sorted(by: { $0.bundleID < $1.bundleID }), id: \.self) { key in
@@ -85,15 +146,103 @@ struct DownloadView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(AssppTheme.background)
+        .safeAreaInset(edge: .bottom) {
+            if selectionMode {
+                Button {
+                    let chosen = vm.manifests.filter { $0.completed && selectedIDs.contains($0.id) }
+                    decryptor.prepareBatch(chosen)
+                } label: {
+                    Text(selectedIDs.count == 1 ? "Prepare Decryptor" : "Prepare \(selectedIDs.count) Apps")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(VeloPillButtonStyle(prominent: true))
+                .disabled(selectedIDs.isEmpty || decryptor.isPreparingBatch)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+                .background(.regularMaterial)
+            }
+        }
         .navigationDestination(for: PackageManifest.self) { manifest in
             PackageView(pkg: manifest)
         }
+        #if os(iOS)
+        .fileImporter(isPresented: $showIPAImporter,
+                      allowedContentTypes: [UTType(filenameExtension: "ipa") ?? .item],
+                      allowsMultipleSelection: false) { result in
+            switch result {
+            case let .success(files):
+                if let file = files.first { prepareImportedIPA(file) }
+            case let .failure(error):
+                importError = error.localizedDescription
+                showImportError = true
+            }
+        }
+        .alert("Import IPA", isPresented: $showImportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importError ?? "Unable to import IPA.")
+        }
+        #endif
+        .alert("Bulk Preparation", isPresented: $showBatchError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(decryptor.batchError ?? "Unable to prepare the selected apps.")
+        }
+        .onChange(of: decryptor.batchError) { _, message in
+            showBatchError = message != nil
+        }
+        .onChange(of: decryptor.isPreparingBatch) { _, preparing in
+            if !preparing, decryptor.batchError == nil, decryptor.batchTotal > 1 {
+                selectionMode = false
+                selectedIDs.removeAll()
+            }
+        }
         .toolbar {
+            if !vm.manifests.filter(\.completed).isEmpty {
+                Button(selectionMode ? "Done" : "Select") {
+                    selectionMode.toggle()
+                    if !selectionMode { selectedIDs.removeAll() }
+                }
+            }
+            #if os(iOS)
+            Button {
+                showIPAImporter = true
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+            }
+            .disabled(importingIPA || decryptor.isPreparingBatch)
+            .accessibilityLabel("Import IPA from Files")
+            #endif
             NavigationLink(destination: AddDownloadView()) {
                 Image(systemName: "plus")
             }
         }
     }
+
+    #if os(iOS)
+    /// Keep the file provider access scoped to the detached packaging task.
+    /// Errors are surfaced locally; credentials and file contents aren't logged.
+    private func prepareImportedIPA(_ url: URL) {
+        guard !importingIPA else { return }
+        importingIPA = true
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    let canAccess = url.startAccessingSecurityScopedResource()
+                    defer {
+                        if canAccess { url.stopAccessingSecurityScopedResource() }
+                    }
+                    return try FairPlayedHelper.prepareImportedIPA(url)
+                }.value
+                decryptor.sharePackage = PreparedDecryptionPackage(url: result)
+            } catch {
+                importError = error.localizedDescription
+                showImportError = true
+            }
+            importingIPA = false
+        }
+    }
+    #endif
 
     private var packageList: some View {
         Group {
@@ -111,9 +260,17 @@ struct DownloadView: View {
                     }
                 }
             }
+            if (selectedFilter == .all || selectedFilter == .completed) && !preparedManifests.isEmpty {
+                Section("Prepared") {
+                    ForEach(preparedManifests, id: \.id) { req in
+                        manifestRow(req)
+                    }
+                }
+            }
             if selectedFilter != .all &&
                 ((selectedFilter == .active && activeManifests.isEmpty && vm.pendingPreparations.isEmpty) ||
-                 (selectedFilter == .ready && readyManifests.isEmpty)) {
+                 (selectedFilter == .ready && readyManifests.isEmpty) ||
+                 (selectedFilter == .completed && preparedManifests.isEmpty)) {
                 Text("Nothing here yet")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -126,8 +283,23 @@ struct DownloadView: View {
     }
 
     private func manifestRow(_ req: PackageManifest) -> some View {
-        PackageManifestRow(manifest: req) {
-            deleteImmediately(id: req.id)
+        HStack(spacing: 12) {
+            if selectionMode {
+                Button {
+                    guard req.completed else { return }
+                    if !selectedIDs.insert(req.id).inserted { selectedIDs.remove(req.id) }
+                } label: {
+                    Image(systemName: selectedIDs.contains(req.id) ?
+                          "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundStyle(req.completed ? AssppTheme.accent : .gray)
+                }
+                .buttonStyle(.plain)
+                .disabled(!req.completed)
+            }
+            PackageManifestRow(manifest: req) {
+                deleteImmediately(id: req.id)
+            }
         }
         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
         .listRowSeparator(.hidden)
@@ -140,6 +312,7 @@ struct DownloadView: View {
         Task { @MainActor in
             await Task.yield()
             guard let request = vm.manifests.first(where: { $0.id == id }) else { return }
+            selectedIDs.remove(id)
             vm.delete(request: request)
         }
     }
@@ -149,7 +322,10 @@ private struct PackageManifestRow: View {
     let manifest: PackageManifest
     let onDelete: () -> Void
     @State private var vm = Downloads.this
+    @State private var decryptor = DecryptionCenter.shared
+    @State private var showPreparationError = false
     @State private var showDetails = false
+    @State private var shareOriginal: PreparedDecryptionPackage?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -162,12 +338,19 @@ private struct PackageManifestRow: View {
 
                 switch manifest.state.status {
                 case .completed:
-                    ShareLink(item: manifest.targetLocation) {
-                        Image(systemName: "square.and.arrow.up")
-                            .frame(width: 32, height: 32)
+                    Button {
+                        decryptor.prepare(manifest)
+                    } label: {
+                        if decryptor.status(for: manifest) == .preparing {
+                            ProgressView().tint(.white)
+                        } else {
+                            Text("Decrypt")
+                                .font(.caption.weight(.bold))
+                        }
                     }
-                    .buttonStyle(VeloPillButtonStyle())
-                    .accessibilityLabel("Share Original IPA")
+                    .buttonStyle(VeloPillButtonStyle(prominent: true))
+                    .disabled(decryptor.status(for: manifest) == .preparing)
+                    .accessibilityLabel("Decrypt IPA")
                 case .pending, .downloading:
                     Button {
                         vm.suspend(request: manifest)
@@ -214,8 +397,25 @@ private struct PackageManifestRow: View {
                     .tint(AssppTheme.accent)
             } else {
                 HStack(spacing: 8) {
-                    Label("Download Complete", systemImage: "checkmark.circle")
-                        .foregroundStyle(.secondary)
+                    switch decryptor.status(for: manifest) {
+                    case .preparing:
+                        Label("Preparing FairPlayed...", systemImage: "lock.open.fill")
+                            .foregroundStyle(AssppTheme.accent)
+                    case .ready:
+                        Label("Ready to Sign", systemImage: "checkmark.seal.fill")
+                            .foregroundStyle(.secondary)
+                    case let .failed(message):
+                        Button {
+                            showPreparationError = true
+                        } label: {
+                            Label(message, systemImage: "exclamationmark.triangle")
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                    case .idle:
+                        Label("Ready to Decrypt", systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Text(manifest.package.software.version)
                         .foregroundStyle(.secondary)
@@ -227,7 +427,24 @@ private struct PackageManifestRow: View {
         .background(AssppTheme.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contextMenu {
             if manifest.completed {
-                ShareLink(item: manifest.targetLocation) {
+                Button {
+                    decryptor.prepare(manifest)
+                } label: {
+                    Label("Decrypt IPA", systemImage: "lock.open.fill")
+                }
+                .disabled(decryptor.status(for: manifest) == .preparing)
+
+                if decryptor.preparedURL(for: manifest) != nil {
+                    Button {
+                        decryptor.shareExisting(manifest)
+                    } label: {
+                        Label("Share Prepared IPA", systemImage: "square.and.arrow.up")
+                    }
+                }
+
+                Button {
+                    shareOriginal = PreparedDecryptionPackage(url: manifest.targetLocation)
+                } label: {
                     Label("Share Original IPA", systemImage: "square.and.arrow.up.on.square")
                 }
 
@@ -252,12 +469,35 @@ private struct PackageManifestRow: View {
                 }
             }
         }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            if manifest.completed {
+                Button {
+                    decryptor.prepare(manifest)
+                } label: {
+                    Label("Decrypt", systemImage: "lock.open.fill")
+                }
+                .tint(.gray)
+                .disabled(decryptor.status(for: manifest) == .preparing)
+            }
+        }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
                 onDelete()
             } label: {
                 Label("Delete", systemImage: "trash")
             }
+        }
+        .alert("Preparation Details", isPresented: $showPreparationError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if case let .failed(message) = decryptor.status(for: manifest) {
+                Text(message)
+            } else {
+                Text("No preparation error is currently recorded.")
+            }
+        }
+        .sheet(item: $shareOriginal) { item in
+            AssppActivityShare(items: [item.url])
         }
         .navigationDestination(isPresented: $showDetails) {
             PackageView(pkg: manifest)

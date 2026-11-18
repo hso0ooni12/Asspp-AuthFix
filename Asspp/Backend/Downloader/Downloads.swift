@@ -227,6 +227,13 @@ class Downloads {
                                     self.releaseTransferSlot(request.id)
                                     self.refreshRunningTaskCount()
                                     self.saveManifests()
+                                    #if os(iOS)
+                                        // Foreground preparation only; helper signing and installation remain separate.
+                                        if self.manifests.contains(where: { $0.id == request.id }),
+                                           UserDefaults.standard.bool(forKey: "Asspp.AutoPrepareDecrypt") {
+                                            DecryptionCenter.shared.prepare(request)
+                                        }
+                                    #endif
                                 }
                             } catch {
                                 await MainActor.run {
