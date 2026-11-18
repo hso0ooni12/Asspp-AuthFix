@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build-test-ipa:
-    runs-on: macos-26-intel
+    runs-on: macos-26
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4

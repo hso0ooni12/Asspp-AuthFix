@@ -189,9 +189,6 @@ struct SettingView: View {
             Button("Reset Preferences") {
                 vm.demoMode = false
                 appearance = "system"
-                #if os(iOS)
-                    autoPrepareDecrypt = false
-                #endif
                 UserDefaults.standard.removeObject(forKey: "searchKey")
                 UserDefaults.standard.removeObject(forKey: "searchRegion")
                 for key in UserDefaults.standard.dictionaryRepresentation().keys
