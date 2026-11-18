@@ -27,9 +27,10 @@ enum StoreDownloadService {
     static func download(account: inout Account, package: AppStore.AppPackage,
                          attempt: DownloadAttempt) async throws -> DownloadOutput {
         let email = account.email
+        let platform = StorePackageValidator.expectedPlatform(for: package)
         return try await product(account: &account, package: package, version: package.externalVersionID,
                                  operation: "download", attempt: attempt) { item in
-            try await output(item: item, email: email, bundleID: package.software.bundleID)
+            try await output(item: item, email: email, bundleID: package.software.bundleID, platform: platform)
         }
     }
 
@@ -481,7 +482,8 @@ enum StoreDownloadService {
     }
 
     /// ApplePackage's DownloadOutput format, also consumed by SignatureInjector.
-    private static func output(item: [String: Any], email: String, bundleID: String) async throws -> DownloadOutput {
+    private static func output(item: [String: Any], email: String, bundleID: String,
+                               platform: String) async throws -> DownloadOutput {
         guard let url = item["URL"] as? String, let asset = URL(string: url),
               ["https", "http"].contains(asset.scheme), asset.host != nil,
               var metadata = item["metadata"] as? [String: Any],
@@ -497,7 +499,7 @@ enum StoreDownloadService {
         var build = metadata["bundleVersion"] as? String ?? ""
         if version.isEmpty || build.isEmpty {
             guard asset.scheme == "https" else { throw StoreDownloadError.invalidPackage }
-            let verified = try await RemoteIPAInfoPlist.read(url: asset, bundleID: bundleID)
+            let verified = try await RemoteIPAInfoPlist.read(url: asset, bundleID: bundleID, platform: platform)
             version = verified.version
             build = verified.build
             metadata["bundleShortVersionString"] = version

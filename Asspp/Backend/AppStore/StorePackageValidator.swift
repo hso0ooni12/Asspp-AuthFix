@@ -2,6 +2,10 @@ import Foundation
 import ZIPFoundation
 
 enum StorePackageValidator {
+    static func expectedPlatform(for package: AppStore.AppPackage) -> String {
+        package.entityType == .appleTV ? "AppleTVOS" : "iPhoneOS"
+    }
+
     static func validate(at url: URL, package: AppStore.AppPackage) throws {
         let archive = try Archive(url: url, accessMode: .read)
         let entries = archive.filter { StoreDownloadProtocol.isMainInfoPlist($0.path) }
@@ -18,7 +22,7 @@ enum StorePackageValidator {
         }
         try StoreDownloadProtocol.validatePackageInfo(
             info, bundleID: package.software.bundleID,
-            platform: package.entityType == .appleTV ? "AppleTVOS" : "iPhoneOS",
+            platform: expectedPlatform(for: package),
         )
     }
 }

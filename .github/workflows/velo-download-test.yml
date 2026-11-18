@@ -21,6 +21,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25.0"
+          cache: false
       - name: Select Xcode and build tools
         shell: bash
         run: |
@@ -126,6 +127,7 @@ jobs:
           done
       - name: Build unsigned test IPA
         env:
+          VELO_VERIFIED_TRANSPORT_RUN: "44276719973"
           GITHUB_TOKEN: ${{ github.token }}
           R3_KBSYNC_ARCHIVE: ${{ github.workspace }}/.ci-cache/libR3KBSync.a
           R6_TCI_ARCHIVE: ${{ github.workspace }}/.ci-cache/libunicorn.a

@@ -167,7 +167,7 @@ class AppPackageArchive {
             defer { loading = false }
             let requestedPackage = package
             let bundleID = requestedPackage.software.bundleID
-            let platform = requestedPackage.entityType == .appleTV ? "AppleTVOS" : "iPhoneOS"
+            let platform = StorePackageValidator.expectedPlatform(for: requestedPackage)
             await withTaskGroup(of: (String, String?, Date?).self) { assets in
                 for identifier in batch {
                     do {
