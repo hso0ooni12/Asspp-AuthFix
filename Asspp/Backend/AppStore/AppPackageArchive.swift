@@ -60,6 +60,22 @@ class AppPackageArchive {
     @ObservationIgnored
     private var unavailableVersionIDs: Set<String> = []
 
+    /// A single denied metadata read must never permanently mark every
+    /// historical build unavailable. Briefly back off instead and let an
+    /// explicit user action retry later.
+    var metadataProbePausedUntil: Date?
+
+    var metadataProbePaused: Bool {
+        metadataProbePausedUntil.map { Date() < $0 } ?? false
+    }
+
+    func retryVersionDetails() {
+        guard !loading else { return }
+        metadataProbePausedUntil = nil
+        error = nil
+        populateNextVersionItems(count: 2)
+    }
+
     var error: String?
     var loading = false
     var shouldDismiss = false
@@ -172,7 +188,7 @@ class AppPackageArchive {
     }
 
     func populateNextVersionItems(count: Int = 3) {
-        guard let accountIdentifier, !loading, !isVersionItemsFullyLoaded else { return }
+        guard let accountIdentifier, !loading, !isVersionItemsFullyLoaded, !metadataProbePaused else { return }
         loading = true
         error = nil
 
@@ -192,6 +208,7 @@ class AppPackageArchive {
                     let metadata = try await StoreDownloadService.versionMetadataFromAsset(
                         asset, bundleID: requestedPackage.software.bundleID)
                     self.versionItems[version] = metadata
+                    self.metadataProbePausedUntil = nil
                 } catch {
                     if let failure = error as? StoreDownloadError {
                         let accessDenied: Bool
@@ -200,12 +217,13 @@ class AppPackageArchive {
                         default: accessDenied = false
                         }
                         if accessDenied {
-                            // A denial affects this Apple session, not just
-                            // one historical row. Keep every real ID visible,
-                            // stop the repeated rejected metadata requests.
-                            self.unavailableVersionIDs.formUnion(self.versionIdentifiers)
-                            self.error = error.localizedDescription
-                            logger.info("Historical metadata access denied; preserved all cached IDs")
+                            // A 403 can be an authorization failure or
+                            // throttling; do not mark all builds permanently
+                            // unavailable. Keep verified labels, pause the
+                            // remaining metadata reads and offer manual retry.
+                            self.metadataProbePausedUntil = Date().addingTimeInterval(90)
+                            self.error = "Apple refused version metadata (HTTP 403). Verified labels are saved; try again later."
+                            logger.info("Historical metadata declined; preserving cached labels and pausing further probes")
                             break
                         }
                     }
@@ -220,7 +238,8 @@ class AppPackageArchive {
     }
 
     func populateVersionItem(for versionID: String) {
-        guard let accountIdentifier, !loading, versionIdentifiers.contains(versionID), versionItems[versionID] == nil else { return }
+        guard let accountIdentifier, !loading, !metadataProbePaused,
+              versionIdentifiers.contains(versionID), versionItems[versionID] == nil else { return }
         loading = true
         error = nil
 
@@ -234,9 +253,20 @@ class AppPackageArchive {
                 let metadata = try await StoreDownloadService.versionMetadataFromAsset(
                     asset, bundleID: requestedPackage.software.bundleID)
                 self.versionItems[versionID] = metadata
+                self.metadataProbePausedUntil = nil
             } catch {
-                self.unavailableVersionIDs.insert(versionID)
-                logger.info("Historical version details unavailable; version ID remains downloadable")
+                if let failure = error as? StoreDownloadError {
+                    switch failure {
+                    case .response(403), .emptyResponse(403):
+                        self.metadataProbePausedUntil = Date().addingTimeInterval(90)
+                        self.error = "Apple refused version metadata (HTTP 403). Verified labels are saved; try again later."
+                    default:
+                        self.unavailableVersionIDs.insert(versionID)
+                    }
+                } else {
+                    self.unavailableVersionIDs.insert(versionID)
+                }
+                logger.info("Historical version details could not be confirmed; verified labels remain cached")
             }
             self.loading = false
         }

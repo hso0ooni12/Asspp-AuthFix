@@ -15,6 +15,21 @@ enum StoreDownloadService {
         }
     }
 
+    /// Keep one explicitly stateless commerce transport alive across requests.
+    /// Account tokens/cookies are attached per request and never stored on the
+    /// session. Reusing the URLSession avoids repeated TCP/TLS setup without
+    /// sharing credentials or allowing automatic cross-host redirects.
+    private static let commerceSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.urlCredentialStorage = nil
+        config.urlCache = nil
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 60
+        return URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
+    }()
+
     static func download(account: inout Account, package: AppStore.AppPackage) async throws -> DownloadOutput {
         let email = account.email
         return try await product(account: &account, package: package, version: package.externalVersionID, operation: "download") { item in
@@ -104,15 +119,9 @@ enum StoreDownloadService {
         let version = version.flatMap { $0.isEmpty ? nil : $0 }
         let platform = package.entityType ?? .iPhone
         logger.info("Store download [\(trace)]: operation=\(operation) app=\(app.id) platform=\(platform.rawValue) store=\(account.store) version=\(version ?? "latest")")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieStorage = nil
-        configuration.httpShouldSetCookies = false
-        configuration.urlCredentialStorage = nil
-        configuration.urlCache = nil
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
-        let session = URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
+        // Session lifetime is independent of each request; individual tasks
+        // still support cancellation via URLSession.data(for:) and bytes(for:).
+        let session = commerceSession
         do {
             let region = Configuration.countryCode(for: account.store)
             var effectiveVersion = version
@@ -354,9 +363,9 @@ enum StoreDownloadService {
         // Generate only after an explicit GET request, keeping the native
         // preparation detached from the UI and on a user-initiated priority.
         // Never preload the expensive emulator while browsing/searching.
-        let generation = await Task.detached(priority: .userInitiated) {
-            R3KBSync.generate(guid: guid, directoryServicesIdentifier: dsid)
-        }.value
+        let generation = await DownloadPreparation.shared.generation(
+            guid: guid, dsid: dsid, priority: .userInitiated
+        )
         logger.info("Store download [\(trace)]: kbsync status=\(generation.status)")
         guard let blob = generation.blob else { throw StoreDownloadError.invalidPackage }
 

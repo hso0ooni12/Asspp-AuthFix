@@ -12,8 +12,13 @@ struct ProductHistoryView: View {
     @State var vm: AppPackageArchive
     @State private var showErrorAlert = false
     @State private var downloadingVersions: Set<String> = []
+    @State private var showUnverifiedVersions = false
     @State private var downloads = Downloads.this
     @Environment(\.dismiss) var dismiss
+
+    private var unverifiedCount: Int {
+        vm.versionIdentifiers.count { vm.versionItems[$0] == nil }
+    }
 
     var body: some View {
         List {
@@ -42,7 +47,7 @@ struct ProductHistoryView: View {
                 .listRowBackground(Color.clear)
             }
             Section("Previous Versions") {
-                ForEach(vm.versionIdentifiers, id: \.self) { key in
+                ForEach(vm.versionIdentifiers.filter { vm.versionItems[$0] != nil || showUnverifiedVersions }, id: \.self) { key in
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         if let verified = vm.versionItems[key] {
@@ -50,7 +55,7 @@ struct ProductHistoryView: View {
                                 .font(.body.weight(.medium))
                                 .foregroundStyle(.primary)
                         } else {
-                            Text(vm.loading ? "Verifying version…" : "Version unavailable")
+                            Text(vm.loading ? "Verifying version…" : "Version name not verified")
                                 .font(.body.weight(.medium))
                                 .foregroundStyle(.secondary)
                             Text("Exact version not yet verified by Apple")
@@ -96,7 +101,30 @@ struct ProductHistoryView: View {
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
-            }
+                }
+                if unverifiedCount > 0 && !showUnverifiedVersions {
+                    Button {
+                        showUnverifiedVersions = true
+                    } label: {
+                        Label("\(unverifiedCount) other builds — version details unverified",
+                              systemImage: "info.circle")
+                            .font(.subheadline)
+                    }
+                    .accessibilityHint("Expand builds with IDs recorded by Apple but without verified version names.")
+                }
+                if vm.metadataProbePausedUntil != nil && unverifiedCount > 0 {
+                    VStack(alignment: .leading, spacing: 9) {
+                        Label("Apple declined version details. Verified versions remain available.",
+                              systemImage: "wifi.exclamationmark")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button("Retry Version Details") {
+                            vm.retryVersionDetails()
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .disabled(vm.loading)
+                    }
+                    .padding(.vertical, 6)
+                }
             }
         }
         .listStyle(.insetGrouped)

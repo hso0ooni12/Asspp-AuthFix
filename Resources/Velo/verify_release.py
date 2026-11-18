@@ -123,7 +123,7 @@ def validate_archive():
         autoFreeLicenseOnDownload=True,
         autoPaidPurchase=False,
         loginSAPPreconnect=True,
-        downloadTransport="R20 per-request URLSession with temporary R3 cooldown and bounded transient retries",
+        downloadTransport="Reusable isolated URLSession; single-flight KBSync preparation with guarded R20/R3 fallback",
         directDecryptionOfNewDownloads=False,
         deviceValidation="Public beta: physical iPhone testing required for Apple login, old versions and imported IPA decryption",
         measuredSpeedImprovement="unverified; compare cached rebuild timing separately",

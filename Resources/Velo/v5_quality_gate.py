@@ -222,7 +222,8 @@ def test_resilient_get_and_history_56():
     archived = source("Asspp/Backend/AppStore/AppPackageArchive.swift")
     assert "refreshVersionHistory(" in archived
     assert "self.versionIdentifiers = (Array(versions.reversed()) + self.versionIdentifiers)" in archived
-    assert "self.unavailableVersionIDs.formUnion(self.versionIdentifiers)" in archived
+    assert "self.metadataProbePausedUntil = Date().addingTimeInterval(90)" in archived
+    assert "self.unavailableVersionIDs.formUnion(self.versionIdentifiers)" not in archived
     history = source("Asspp/Interface/Search/ProductHistoryView.swift")
     assert "vm.refreshVersionHistory" in history
     assert "vm.clearVersionItems()" not in history
@@ -256,6 +257,23 @@ def test_verified_versions_and_ticket_recovery_57():
     assert "build-timings.txt" in builder
 
 
+def test_57_network_and_metadata_reliability():
+    service = source("Asspp/Backend/AppStore/StoreDownloadService.swift")
+    history = source("Asspp/Interface/Search/ProductHistoryView.swift")
+    archive = source("Asspp/Backend/AppStore/AppPackageArchive.swift")
+    assert "private static let commerceSession: URLSession" in service
+    assert "config.httpCookieStorage = nil" in service
+    assert "config.urlCredentialStorage = nil" in service
+    assert "let session = commerceSession" in service
+    assert "DownloadPreparation.shared.generation(" in service
+    assert "defer { session.invalidateAndCancel() }" in service  # only short-lived catalog lookup
+    assert "metadataProbePaused" in archive
+    assert "retryVersionDetails()" in archive
+    assert "unverifiedCount" in history
+    assert "showUnverifiedVersions" in history
+    assert 'Text("Version unavailable")' not in history
+
+
 if __name__ == "__main__":
     for test in (
         test_direct_app_count,
@@ -270,6 +288,7 @@ if __name__ == "__main__":
         test_public_beta_reliability_and_import,
         test_resilient_get_and_history_56,
         test_verified_versions_and_ticket_recovery_57,
+        test_57_network_and_metadata_reliability,
     ):
         test()
         print("PASS", test.__name__)
